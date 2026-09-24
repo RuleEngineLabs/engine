@@ -1,4 +1,4 @@
-name: Develop — Validate & Cut Release
+name: Develop — Validate
 
 on:
   push:
@@ -6,8 +6,7 @@ on:
       - develop
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   validate:
@@ -20,6 +19,7 @@ jobs:
         with:
           go-version: '1.24'
           cache: true
+          cache-dependency-path: go.sum
 
       - name: go vet
         run: go vet ./...
@@ -28,56 +28,3 @@ jobs:
         run: |
           go test -race -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
-
-  cut-release:
-    name: Cut release branch & open PR → main
-    needs: validate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Determine next version
-        id: version
-        run: |
-          LAST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-          if [ -z "$LAST" ]; then
-            NEXT="v0.1.0"
-          else
-            IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST#v}"
-            NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
-          fi
-          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
-          echo "Next version: $NEXT"
-
-      - name: Create release branch
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "release/$VERSION"
-          git push origin "release/$VERSION"
-
-      - name: Open PR release → main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          gh pr create \
-            --base main \
-            --head "release/$VERSION" \
-            --title "release: $VERSION" \
-            --body "$(cat <<EOF
-          ## Release $VERSION
-
-          Criado automaticamente pela esteira após validação em \`develop\`.
-
-          **CI passed:** go vet ✅ | tests ✅ | coverage ✅
-
-          ### Checklist
-          - [ ] Docker build validado (CI da release branch)
-          - [ ] Revisão de código
-          EOF
-          )" || echo "PR already exists"

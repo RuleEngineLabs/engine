@@ -1,0 +1,122 @@
+name: Release — Cut (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  cut:
+    name: Compute version & cut release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        run: |
+          LAST_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n1)
+          if [ -z "$LAST_TAG" ]; then
+            MAJOR=0; MINOR=0; PATCH=0
+            COMMITS=$(git log --format="%s%n%b" HEAD)
+          else
+            IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG#v}"
+            COMMITS=$(git log --format="%s%n%b" "${LAST_TAG}..HEAD")
+          fi
+
+          HAS_BREAKING=$(echo "$COMMITS" | grep -E '^(feat|fix|refactor|chore|docs|ci|perf|test|build)!:|^BREAKING CHANGE:' || true)
+          HAS_FEAT=$(echo "$COMMITS" | grep -E '^feat(\([^)]+\))?: ' || true)
+          HAS_FIX=$(echo "$COMMITS" | grep -E '^fix(\([^)]+\))?: ' || true)
+
+          if [ -z "$HAS_BREAKING" ] && [ -z "$HAS_FEAT" ] && [ -z "$HAS_FIX" ]; then
+            echo "Nenhum commit elegível (feat/fix/breaking). Abortando."
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [ -n "$HAS_BREAKING" ]; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0; BUMP=major
+          elif [ -n "$HAS_FEAT" ]; then
+            MINOR=$((MINOR + 1)); PATCH=0; BUMP=minor
+          else
+            PATCH=$((PATCH + 1)); BUMP=patch
+          fi
+
+          echo "new_version=v${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_OUTPUT
+          echo "bump=${BUMP}" >> $GITHUB_OUTPUT
+          echo "major=${MAJOR}" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
+          echo "Cortando v${MAJOR}.${MINOR}.${PATCH} (${BUMP})"
+
+      - name: Setup Go
+        if: steps.version.outputs.skip != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Update module path (SIV — MAJOR only)
+        if: steps.version.outputs.skip != 'true' && steps.version.outputs.bump == 'major'
+        run: |
+          NEW_MAJOR="${{ steps.version.outputs.major }}"
+          CURRENT_PATH=$(grep '^module ' go.mod | awk '{print $2}')
+          BASE_PATH=$(echo "$CURRENT_PATH" | sed 's|/v[0-9]\+$||')
+
+          if [ "$NEW_MAJOR" -le 1 ]; then
+            NEW_PATH="$BASE_PATH"
+          else
+            NEW_PATH="${BASE_PATH}/v${NEW_MAJOR}"
+          fi
+
+          if [ "$CURRENT_PATH" = "$NEW_PATH" ]; then
+            echo "Module path inalterado ($CURRENT_PATH). Nenhuma atualização SIV."
+            exit 0
+          fi
+
+          echo "SIV: ${CURRENT_PATH} → ${NEW_PATH}"
+          sed -i "s|^module .*|module ${NEW_PATH}|" go.mod
+          find . -name '*.go' | xargs sed -i \
+            -e "s|\"${CURRENT_PATH}/|\"${NEW_PATH}/|g" \
+            -e "s|\"${CURRENT_PATH}\"|\"${NEW_PATH}\"|g"
+          go mod tidy
+          go install golang.org/x/tools/cmd/goimports@latest
+          goimports -w .
+
+      - name: Create release branch & push
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          BRANCH="release/${{ steps.version.outputs.new_version }}"
+          git checkout -b "$BRANCH"
+          if ! git diff --quiet HEAD; then
+            git add -A
+            git commit -m "chore: SIV bump para ${{ steps.version.outputs.new_version }} [skip ci]"
+          fi
+          git push origin "$BRANCH"
+
+      - name: Open PR release → main
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="release/${{ steps.version.outputs.new_version }}"
+          EXISTING=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING já existe para ${BRANCH} → main"
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "release: ${{ steps.version.outputs.new_version }}" \
+              --body "## Release ${{ steps.version.outputs.new_version }}
+
+**Bump:** \`${{ steps.version.outputs.bump }}\`
+
+Corte automático a partir do HEAD de \`develop\`. Fixes de estabilização chegam via \`fix/**\` → \`${BRANCH}\`."
+          fi

@@ -10,6 +10,18 @@ permissions:
   pull-requests: write
 
 jobs:
+  commitlint:
+    name: Lint commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: wagoid/commitlint-github-action@v6
+        with:
+          configFile: .commitlintrc.js
+
   validate:
     name: Go validate
     runs-on: ubuntu-latest
@@ -20,6 +32,7 @@ jobs:
         with:
           go-version: '1.24'
           cache: true
+          cache-dependency-path: go.sum
 
       - name: go vet
         run: go vet ./...
@@ -38,27 +51,32 @@ jobs:
           path: coverage.out
 
   open-pr:
-    name: Open PR → develop
-    needs: validate
+    name: Open PR → develop (se não existe)
+    needs: [commitlint, validate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create PR to develop
+      - name: Create PR to develop (idempotente)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BRANCH="${{ github.ref_name }}"
-          TITLE="feat: ${BRANCH#feature/}"
-          gh pr create \
-            --base develop \
-            --head "$BRANCH" \
-            --title "$TITLE" \
-            --body "$(cat <<'EOF'
-          ## Automated PR
+          EXISTING=$(gh pr list --head "$BRANCH" --base develop --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING já existe — push atualizou o diff, CI vai disparar no synchronize."
+          else
+            TITLE="feat: ${BRANCH#feature/}"
+            gh pr create \
+              --base develop \
+              --head "$BRANCH" \
+              --title "$TITLE" \
+              --body "$(cat <<'EOF'
+## Automated PR
 
-          Criado automaticamente pelo pipeline após validação em `${{ github.ref_name }}`.
+Branch: `${{ github.ref_name }}`
 
-          **CI passed:** go vet ✅ | tests ✅ | coverage ✅
-          EOF
-          )" || echo "PR already exists or base branch not found"
+**CI passed:** commitlint ✅ | go vet ✅ | tests ✅ | coverage ✅
+EOF
+)"
+          fi
