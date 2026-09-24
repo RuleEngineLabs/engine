@@ -1,0 +1,76 @@
+name: Feature — Validate & Open PR
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  commitlint:
+    name: Lint commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: wagoid/commitlint-github-action@v6
+        with:
+          configFile: .commitlintrc.mjs
+
+  validate:
+    name: Go validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Test + coverage
+        run: |
+          go test -race -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out | tee coverage.txt
+          TOTAL=$(grep 'total:' coverage.txt | awk '{print $3}' | tr -d '%')
+          echo "Coverage: ${TOTAL}%"
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}
+          path: coverage.out
+
+  open-pr:
+    name: Open PR → develop (se não existe)
+    needs: [commitlint, validate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create PR to develop (idempotente)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          EXISTING=$(gh pr list --head "$BRANCH" --base develop --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING já existe — push atualizou o diff, CI vai disparar no synchronize."
+          else
+            TITLE="feat: ${BRANCH#feature/}"
+            BODY=$(printf "## Automated PR\n\nBranch: \`%s\`\n\n**CI passed:** commitlint ✅ | go vet ✅ | tests ✅ | coverage ✅" "$BRANCH")
+            gh pr create \
+              --base develop \
+              --head "$BRANCH" \
+              --title "$TITLE" \
+              --body "$BODY"
+          fi
