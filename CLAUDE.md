@@ -57,7 +57,7 @@ Ordem das transitions:
 4. `result.status >= 500` → `providerUnavailable`
 5. `result.status >= 300` → `invalidRequest`
 
-**Em aberto, nunca confirmado:** mover 401/403/408 pra `providerUnavailable` em vez de cair no bucket genérico de `invalidRequest`.
+**Decisão confirmada (2026-09-24):** 401/403/408 têm bucket separado por código — cada um requer transition explícita na política (não caem em `providerUnavailable` nem em `invalidRequest` automaticamente).
 
 ### Retry (apiCall/dbQuery)
 - Campo por state, sem herança de `connection`; state sem `retry` = sem retry.
@@ -65,7 +65,7 @@ Ordem das transitions:
 - `backoffMs` mais curto que o necessário reusa o último valor.
 - `maxAttempts` ausente com `backoffMs` presente: default = `len(backoffMs)+1`.
 - `retryable` padrão proposto (não formalizado como lista fechada): `429, 500, 502, 503, 504`.
-- Retry + cache: assume que só o resultado final pós-retry é cacheado — **nunca confirmado explicitamente**.
+- Retry + cache: apenas o resultado final pós-retry é cacheado — **confirmado (2026-09-24)**.
 
 ### Cache de resultado (dentro de connectors, distinto do cache de artefato)
 - Opcional por state de I/O. Elegibilidade: REST só `method: GET`; SQL heurística de prefixo `SELECT`/`WITH`; NoSQL já restrito por `operation`.
