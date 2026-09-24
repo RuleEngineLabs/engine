@@ -1,0 +1,36 @@
+name: Release — Merge back to develop
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge-back:
+    name: Open PR release → develop
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Open PR release → develop (idempotente)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          EXISTING=$(gh pr list --head "$RELEASE_BRANCH" --base develop --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "PR #$EXISTING já existe para ${RELEASE_BRANCH} → develop"
+          else
+            gh pr create \
+              --base develop \
+              --head "$RELEASE_BRANCH" \
+              --title "chore: merge back ${RELEASE_BRANCH} → develop" \
+              --body "Merge-back automático após release mergeada em \`main\`. Garante que fixes de estabilização não se percam na próxima release."
+          fi
