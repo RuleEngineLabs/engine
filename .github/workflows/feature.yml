@@ -57,9 +57,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Generate agent token
+        id: agent_token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+
       - name: Create PR to develop (idempotente)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.agent_token.outputs.token }}
         run: |
           BRANCH="${{ github.ref_name }}"
           # Extrai número da issue do nome da branch (ex: feature/4-us-001-... → 4)

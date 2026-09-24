@@ -13,15 +13,40 @@ permissions:
 
 jobs:
   merge-back:
-    name: Open PR release → develop
+    name: Tag release & open PR → develop
     if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      - name: Generate agent token
+        id: agent_token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+
+      - name: Create release tag (idempotente)
+        env:
+          GH_TOKEN: ${{ steps.agent_token.outputs.token }}
+        run: |
+          TAG="${{ github.event.pull_request.head.ref }}"
+          TAG="${TAG#release/}"
+          COMMIT_SHA="${{ github.event.pull_request.merge_commit_sha }}"
+          EXISTING=$(gh api repos/${{ github.repository }}/git/refs/tags/${TAG} 2>/dev/null | jq -r '.ref // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "Tag ${TAG} já existe — pulando."
+          else
+            gh api repos/${{ github.repository }}/git/refs \
+              --method POST \
+              -f ref="refs/tags/${TAG}" \
+              -f sha="${COMMIT_SHA}"
+            echo "Tag ${TAG} criada em ${COMMIT_SHA}"
+          fi
+
       - name: Open PR release → develop (idempotente)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.agent_token.outputs.token }}
           RELEASE_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           EXISTING=$(gh pr list --head "$RELEASE_BRANCH" --base develop --state open --json number --jq '.[0].number // empty')
