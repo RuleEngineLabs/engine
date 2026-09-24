@@ -67,16 +67,10 @@ jobs:
             echo "PR #$EXISTING já existe — push atualizou o diff, CI vai disparar no synchronize."
           else
             TITLE="feat: ${BRANCH#feature/}"
+            BODY=$(printf "## Automated PR\n\nBranch: \`%s\`\n\n**CI passed:** commitlint ✅ | go vet ✅ | tests ✅ | coverage ✅" "$BRANCH")
             gh pr create \
               --base develop \
               --head "$BRANCH" \
               --title "$TITLE" \
-              --body "$(cat <<'EOF'
-## Automated PR
-
-Branch: `${{ github.ref_name }}`
-
-**CI passed:** commitlint ✅ | go vet ✅ | tests ✅ | coverage ✅
-EOF
-)"
+              --body "$BODY"
           fi

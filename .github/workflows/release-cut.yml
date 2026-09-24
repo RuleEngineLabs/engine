@@ -110,13 +110,11 @@ jobs:
           if [ -n "$EXISTING" ]; then
             echo "PR #$EXISTING já existe para ${BRANCH} → main"
           else
+            BODY=$(printf "## Release %s\n\n**Bump:** \`%s\`\n\nCorte automático a partir do HEAD de \`develop\`. Fixes de estabilização chegam via \`fix/**\` → \`%s\`." \
+              "${{ steps.version.outputs.new_version }}" "${{ steps.version.outputs.bump }}" "$BRANCH")
             gh pr create \
               --base main \
               --head "$BRANCH" \
               --title "release: ${{ steps.version.outputs.new_version }}" \
-              --body "## Release ${{ steps.version.outputs.new_version }}
-
-**Bump:** \`${{ steps.version.outputs.bump }}\`
-
-Corte automático a partir do HEAD de \`develop\`. Fixes de estabilização chegam via \`fix/**\` → \`${BRANCH}\`."
+              --body "$BODY"
           fi
