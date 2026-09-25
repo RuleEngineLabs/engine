@@ -13,22 +13,15 @@ permissions:
 
 jobs:
   merge-back:
-    name: Tag release & open PR → develop
+    name: Open PR release → develop
     if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate agent token
-        id: agent_token
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ secrets.AGENT_CLIENT_ID }}
-          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
-
-      - name: Create release tag (idempotente)
+      - name: Create release tag
         env:
-          GH_TOKEN: ${{ steps.agent_token.outputs.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.event.pull_request.head.ref }}"
           TAG="${TAG#release/}"
@@ -41,12 +34,12 @@ jobs:
               --method POST \
               -f ref="refs/tags/${TAG}" \
               -f sha="${COMMIT_SHA}"
-            echo "Tag ${TAG} criada em ${COMMIT_SHA}"
+            echo "Tag ${TAG} criada no commit ${COMMIT_SHA}"
           fi
 
       - name: Open PR release → develop (idempotente)
         env:
-          GH_TOKEN: ${{ steps.agent_token.outputs.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           EXISTING=$(gh pr list --head "$RELEASE_BRANCH" --base develop --state open --json number --jq '.[0].number // empty')
