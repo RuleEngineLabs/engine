@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-// --- test doubles ---
-
 type mockAuth struct {
 	identity Identity
 	err      error
@@ -30,7 +28,7 @@ func failAuth(msg string) *mockAuth {
 type testSink struct {
 	mu      sync.Mutex
 	entries []AuditEntry
-	failOn  func(AuditEntry) bool // if non-nil and returns true, Record returns an error
+	failOn  func(AuditEntry) bool
 }
 
 func (s *testSink) Record(_ context.Context, entry AuditEntry) error {
@@ -66,7 +64,6 @@ func (s *testSink) find(result string) (AuditEntry, bool) {
 	return AuditEntry{}, false
 }
 
-// mockClock runs AfterFunc callbacks synchronously when Advance is called.
 type mockClock struct {
 	mu     sync.Mutex
 	now    time.Time
@@ -101,7 +98,6 @@ func (c *mockClock) AfterFunc(d time.Duration, f func()) func() {
 	}
 }
 
-// Advance moves the clock forward and fires any timers whose deadline has passed.
 func (c *mockClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	c.now = c.now.Add(d)
@@ -109,7 +105,7 @@ func (c *mockClock) Advance(d time.Duration) {
 	for i := range c.timers {
 		if !c.timers[i].cancelled && !c.now.Before(c.timers[i].deadline) {
 			toFire = append(toFire, c.timers[i].fn)
-			c.timers[i].cancelled = true // each timer fires at most once
+			c.timers[i].cancelled = true
 		}
 	}
 	c.mu.Unlock()
@@ -117,8 +113,6 @@ func (c *mockClock) Advance(d time.Duration) {
 		fn()
 	}
 }
-
-// --- helpers ---
 
 func defaultBaseline() RuntimeConfig {
 	return RuntimeConfig{
@@ -159,8 +153,6 @@ func riskyEvent(seq uint64) Event {
 	}
 }
 
-// --- tests ---
-
 func TestApply_AuthFailure_RejectedAndAudited(t *testing.T) {
 	sink := &testSink{}
 	clk := newMockClock()
@@ -191,8 +183,8 @@ func TestApply_AuthFailure_RejectedAndAudited(t *testing.T) {
 
 func TestApply_SeqReplay_RejectedAndAudited(t *testing.T) {
 	cases := []struct {
-		name    string
-		firstSeq uint64
+		name      string
+		firstSeq  uint64
 		replaySeq uint64
 	}{
 		{"same seq", 5, 5},
@@ -272,7 +264,6 @@ func TestApply_RiskyEvent_ValidationRejections(t *testing.T) {
 
 func TestApply_MaskDisable_BlockedByStaticConfig(t *testing.T) {
 	sink := &testSink{}
-	// Static config does NOT allow unmasked mode.
 	m := newTestManager(sink, StaticConfig{AllowUnmasked: false}, newMockClock())
 
 	applyErr(t, m, riskyEvent(1), ErrUnmaskedDenied)
@@ -284,7 +275,6 @@ func TestApply_MaskDisable_BlockedByStaticConfig(t *testing.T) {
 	if e.Result != "rejected" {
 		t.Errorf("audit result: got %q, want %q", e.Result, "rejected")
 	}
-	// Config must not have changed.
 	if !m.Load().Mask.Enabled {
 		t.Error("mask should still be enabled after rejected event")
 	}
@@ -295,21 +285,18 @@ func TestApply_TTLExpiry_RevertsConfig(t *testing.T) {
 	clk := newMockClock()
 	m := newTestManager(sink, StaticConfig{AllowUnmasked: true}, clk)
 
-	// Disable mask with a 5-minute TTL.
 	applyOK(t, m, riskyEvent(1))
 
 	if m.Load().Mask.Enabled {
 		t.Fatal("mask should be disabled immediately after event")
 	}
 
-	// Advance past the TTL.
 	clk.Advance(61 * time.Second)
 
 	if !m.Load().Mask.Enabled {
 		t.Error("mask should be re-enabled after TTL expiry")
 	}
 
-	// The audit log must contain a "auto.revert" entry with RevertedAt set.
 	found := false
 	for _, e := range sink.entries {
 		if e.Action == "auto.revert" {
@@ -360,7 +347,6 @@ func TestApply_AuditFailure_RiskyBlockedSafeProceed(t *testing.T) {
 				if !errors.Is(err, ErrAuditBlocked) {
 					t.Errorf("expected ErrAuditBlocked, got: %v", err)
 				}
-				// Config must not have changed (fail-closed).
 				if !m.Load().Mask.Enabled {
 					t.Error("mask should still be enabled after blocked risky event")
 				}
@@ -368,7 +354,6 @@ func TestApply_AuditFailure_RiskyBlockedSafeProceed(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error for safe event: %v", err)
 				}
-				// Config must have changed despite audit failure.
 				if m.Load().Trace.Enabled {
 					t.Error("trace should be disabled after safe event")
 				}
@@ -381,18 +366,13 @@ func TestLoad_InProgressExecutionKeepsOldSnapshot(t *testing.T) {
 	sink := &testSink{}
 	m := newTestManager(sink, StaticConfig{AllowUnmasked: true}, newMockClock())
 
-	// Simulate an execution that captures the snapshot at "start".
 	snapAtStart := m.Load()
 
-	// Another goroutine applies a risky event.
 	applyOK(t, m, riskyEvent(1))
 
-	// The new load sees updated config.
 	if m.Load().Mask.Enabled {
 		t.Error("new load should see mask disabled")
 	}
-	// The in-progress execution still holds the old snapshot — no data race,
-	// no mutation: the pointer it holds is still valid and unchanged.
 	if !snapAtStart.Mask.Enabled {
 		t.Error("snapshot captured before the event must still have mask enabled")
 	}
@@ -400,18 +380,16 @@ func TestLoad_InProgressExecutionKeepsOldSnapshot(t *testing.T) {
 
 func TestNewManager_RestartReturnsToBaseline(t *testing.T) {
 	static := StaticConfig{AllowUnmasked: true}
-	base := defaultBaseline() // mask enabled, includeValues false
+	base := defaultBaseline()
 	sink := &testSink{}
 	clk := newMockClock()
 
 	m := newManagerWithClock(static, base, okAuth(), sink, "inst", clk)
-	// Apply a risky event that changes state.
 	applyOK(t, m, riskyEvent(1))
 	if m.Load().Mask.Enabled {
 		t.Fatal("mask should be disabled after event")
 	}
 
-	// "Restart" = new Manager from the same static + baseline.
 	m2 := newManagerWithClock(static, base, okAuth(), &testSink{}, "inst", newMockClock())
 	if !m2.Load().Mask.Enabled {
 		t.Error("restarted manager should start with baseline (mask enabled)")
@@ -425,12 +403,10 @@ func TestApply_SafeEvent_NoTTLRequired(t *testing.T) {
 	sink := &testSink{}
 	m := newTestManager(sink, StaticConfig{}, newMockClock())
 
-	// trace.disable is safe — no TTL, no reason needed.
 	applyOK(t, m, Event{Type: EventTraceDisable, Scope: GlobalScope(), Seq: 1})
 	if m.Load().Trace.Enabled {
 		t.Error("trace should be disabled")
 	}
-	// mask.enable is safe.
 	applyOK(t, m, Event{Type: EventMaskEnable, Scope: GlobalScope(), Seq: 2})
 	if !m.Load().Mask.Enabled {
 		t.Error("mask should be enabled")
@@ -441,7 +417,6 @@ func TestApply_PerPolicyTraceOverride(t *testing.T) {
 	sink := &testSink{}
 	m := newTestManager(sink, StaticConfig{}, newMockClock())
 
-	// Disable trace globally, then enable for a specific policy.
 	applyOK(t, m, Event{Type: EventTraceDisable, Scope: GlobalScope(), Seq: 1})
 	applyOK(t, m, Event{Type: EventTraceEnable, Scope: PolicyScope("policy-A"), Seq: 2})
 
@@ -459,21 +434,17 @@ func TestApply_TTLCancelledByNewEvent(t *testing.T) {
 	clk := newMockClock()
 	m := newTestManager(sink, StaticConfig{AllowUnmasked: true}, clk)
 
-	// First risky event: TTL = 60s.
 	applyOK(t, m, riskyEvent(1))
-	// Second risky event before first TTL expires: TTL = 120s.
 	applyOK(t, m, Event{
 		Type: EventMaskDisable, Scope: GlobalScope(),
 		Seq: 2, Reason: "still debugging", TTLSeconds: 120,
 	})
 
-	// Advance 61s: first timer would have fired but was cancelled.
 	clk.Advance(61 * time.Second)
 	if m.Load().Mask.Enabled {
 		t.Error("mask should still be disabled — second TTL not yet expired")
 	}
 
-	// Advance another 60s (total 121s): second timer fires.
 	clk.Advance(60 * time.Second)
 	if !m.Load().Mask.Enabled {
 		t.Error("mask should be re-enabled after second TTL expired")
@@ -486,7 +457,6 @@ func TestAuditWriter_HashChain(t *testing.T) {
 	w := NewAuditWriter(path)
 	ctx := context.Background()
 
-	// Write two entries and verify prevHash chaining.
 	e1 := AuditEntry{EventID: "1", Action: "trace.disable", Scope: "global",
 		RequestedBy: "user", RequestedAt: time.Now(), InstanceID: "i1", Result: "applied"}
 	if err := w.Record(ctx, e1); err != nil {

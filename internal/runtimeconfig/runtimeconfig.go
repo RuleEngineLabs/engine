@@ -13,7 +13,6 @@ import (
 
 const maxRiskyTTL = 15 * time.Minute
 
-// Sentinel errors for rejection reasons; callers may use errors.Is.
 var (
 	ErrSeqReplay      = errors.New("runtimeconfig: seq out of order or replay")
 	ErrReasonRequired = errors.New("runtimeconfig: reason required for risky event")
@@ -23,44 +22,35 @@ var (
 	ErrAuditBlocked   = errors.New("runtimeconfig: audit write failed; risky event blocked")
 )
 
-// StaticConfig is loaded once at boot and acts as a hard ceiling for dynamic events.
-// No dynamic event can override what static config forbids.
 type StaticConfig struct {
 	AllowUnmasked bool
 }
 
-// TraceConfig holds trace settings within a RuntimeConfig snapshot.
 type TraceConfig struct {
 	Enabled    bool
-	SampleRate float64         // 0.0–1.0
-	OnError    bool            // trace on error regardless of Enabled
-	Policies   map[string]bool // per-policy override; absent key = use global Enabled
+	SampleRate float64
+	OnError    bool
+	Policies   map[string]bool
 }
 
-// MaskConfig holds masking settings within a RuntimeConfig snapshot.
 type MaskConfig struct {
 	Enabled bool
-	Profile string // "" (default) or "full"
+	Profile string
 }
 
-// RuntimeConfig is an immutable snapshot of all dynamic configuration.
-// It is always swapped atomically as a whole and never mutated in place.
 type RuntimeConfig struct {
 	Trace         TraceConfig
 	Mask          MaskConfig
-	IncludeValues bool // include raw values in trace output
+	IncludeValues bool
 }
 
-// Scope identifies the target of a control event.
 type Scope struct {
 	Global   bool
-	PolicyID string // non-empty when Global=false
+	PolicyID string
 }
 
-// GlobalScope returns a Scope targeting all policies.
 func GlobalScope() Scope { return Scope{Global: true} }
 
-// PolicyScope returns a Scope targeting a single policy.
 func PolicyScope(id string) Scope { return Scope{PolicyID: id} }
 
 func (s Scope) String() string {
@@ -70,7 +60,6 @@ func (s Scope) String() string {
 	return "policy:" + s.PolicyID
 }
 
-// EventType classifies the change a control event requests.
 type EventType string
 
 const (
@@ -82,35 +71,28 @@ const (
 	EventIncludeValuesDisable EventType = "includeValues.disable"
 )
 
-// isRisky returns true for events that expose data; these require TTL + reason + fail-closed audit.
 func (t EventType) isRisky() bool {
 	return t == EventMaskDisable || t == EventIncludeValuesEnable
 }
 
-// Event is a control request sent to Manager.Apply.
-// RequestedBy and SourceIP are supplied by the transport layer, not by this struct.
 type Event struct {
 	Type       EventType
 	Scope      Scope
 	TTLSeconds int
 	Reason     string
-	Seq        uint64 // must be strictly increasing per Manager lifetime; 0 is invalid
+	Seq        uint64
 }
 
-// Identity is returned by a successful Authenticator call.
 type Identity struct {
-	ID     string // human-readable (username / service name)
+	ID     string
 	Role   string
-	Method string // auth method: "token", "mtls", etc.
+	Method string
 }
 
-// Authenticator validates credentials and returns the caller's Identity.
-// Implementations must be safe for concurrent use.
 type Authenticator interface {
 	Authenticate(ctx context.Context, creds string) (Identity, error)
 }
 
-// Clock abstracts time to make TTL behaviour testable without real sleeps.
 type Clock interface {
 	Now() time.Time
 	AfterFunc(d time.Duration, f func()) (cancel func())
@@ -124,8 +106,6 @@ func (realClock) AfterFunc(d time.Duration, f func()) func() {
 	return func() { t.Stop() }
 }
 
-// Manager holds the current RuntimeConfig snapshot and handles control events.
-// All exported methods are safe for concurrent use.
 type Manager struct {
 	ptr    atomic.Pointer[RuntimeConfig]
 	static StaticConfig
@@ -135,12 +115,10 @@ type Manager struct {
 
 	mu           sync.Mutex
 	lastSeq      uint64
-	cancelRevert func() // cancels the in-flight TTL revert, if any
+	cancelRevert func()
 	instanceID   string
 }
 
-// NewManager creates a Manager starting from baseline.
-// baseline is the safe default derived from static config.
 func NewManager(
 	static StaticConfig,
 	baseline RuntimeConfig,
@@ -160,7 +138,6 @@ func NewManager(
 	return m
 }
 
-// newManagerWithClock is the test entry point; it injects a mock Clock.
 func newManagerWithClock(
 	static StaticConfig,
 	baseline RuntimeConfig,
@@ -174,14 +151,10 @@ func newManagerWithClock(
 	return m
 }
 
-// Load returns the current RuntimeConfig snapshot without allocation.
-// The returned pointer remains valid until GC; the snapshot is never mutated.
 func (m *Manager) Load() *RuntimeConfig {
 	return m.ptr.Load()
 }
 
-// Apply validates and applies a control event, writing to the audit log before the swap.
-// creds and sourceIP come from the transport layer, never from the event payload.
 func (m *Manager) Apply(ctx context.Context, ev Event, creds, sourceIP string) error {
 	identity, err := m.auth.Authenticate(ctx, creds)
 	if err != nil {
@@ -258,7 +231,6 @@ func (m *Manager) Apply(ctx context.Context, ev Event, creds, sourceIP string) e
 		if ev.Type.isRisky() {
 			return fmt.Errorf("%w: %v", ErrAuditBlocked, writeErr)
 		}
-		// Best-effort for safe events: proceed with the swap.
 	}
 
 	m.ptr.Store(next)
@@ -276,7 +248,6 @@ func (m *Manager) Apply(ctx context.Context, ev Event, creds, sourceIP string) e
 	return nil
 }
 
-// revert re-applies the safe inverse of a risky event after its TTL expires.
 func (m *Manager) revert(origType EventType, origSeq uint64, byID, sourceIP string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -287,7 +258,7 @@ func (m *Manager) revert(origType EventType, origSeq uint64, byID, sourceIP stri
 	switch origType {
 	case EventMaskDisable:
 		if reverted.Mask.Enabled {
-			return // already safe; nothing to do
+			return
 		}
 		reverted.Mask.Enabled = true
 	case EventIncludeValuesEnable:
@@ -314,11 +285,10 @@ func (m *Manager) revert(origType EventType, origSeq uint64, byID, sourceIP stri
 		InstanceID:  m.instanceID,
 		Result:      "applied",
 	}
-	_ = m.audit.Record(context.Background(), entry) // best-effort
+	_ = m.audit.Record(context.Background(), entry)
 	m.ptr.Store(&reverted)
 }
 
-// applyEvent returns a new RuntimeConfig with ev applied; current is never mutated.
 func applyEvent(current *RuntimeConfig, ev Event) *RuntimeConfig {
 	next := *current
 	switch ev.Type {
@@ -348,14 +318,13 @@ func applyEvent(current *RuntimeConfig, ev Event) *RuntimeConfig {
 	return &next
 }
 
-// auditArgs bundles arguments for buildEntry to avoid a long parameter list.
 type auditArgs struct {
 	ev          Event
 	identity    Identity
-	by          string // fallback RequestedBy when identity is empty (auth failure)
+	by          string
 	sourceIP    string
 	result      string
-	note        string // internal; not written to the entry
+	note        string
 	before      *RuntimeConfig
 	after       *RuntimeConfig
 	requestedAt time.Time
