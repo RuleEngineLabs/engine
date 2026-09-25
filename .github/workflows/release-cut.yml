@@ -100,10 +100,18 @@ jobs:
           fi
           git push origin "$BRANCH"
 
+      - name: Generate agent token
+        if: steps.version.outputs.skip != 'true'
+        id: agent_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.AGENT_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+
       - name: Open PR release → main
         if: steps.version.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.agent_token.outputs.token }}
         run: |
           BRANCH="release/${{ steps.version.outputs.new_version }}"
           EXISTING=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')
