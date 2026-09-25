@@ -105,7 +105,7 @@ jobs:
         id: agent_token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.AGENT_APP_ID }}
+          client-id: ${{ secrets.AGENT_CLIENT_ID }}
           private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
 
       - name: Open PR release → main
