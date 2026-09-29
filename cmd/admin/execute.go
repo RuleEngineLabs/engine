@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/RuleEngineLabs/engine/internal/auth"
@@ -12,6 +13,14 @@ import (
 	"github.com/RuleEngineLabs/engine/internal/ratelimit"
 	"github.com/RuleEngineLabs/engine/internal/store"
 )
+
+// isStaging reports whether the current environment is staging.
+// Reads ENVIRONMENT env var; accepts "staging" (case-insensitive) or "homologacao".
+// Exported as a variable so tests can override it.
+var isStaging = func() bool {
+	e := os.Getenv("ENVIRONMENT")
+	return e == "staging" || e == "homologacao"
+}
 
 // handleExecute serves POST /execute/{id}.
 // When rl is non-nil it is applied to noCache requests; pass nil to disable rate limiting.
@@ -25,8 +34,12 @@ func handleExecute(ps *store.PolicyStore, rl *ratelimit.Limiter) http.HandlerFun
 		claims := auth.FromContext(r.Context())
 
 		if noCache {
-			// Benchmark origin: restrict to policy-operators or an approver group
+			// Benchmark origin: restricted to approvers AND staging environment only.
 			if origin == "benchmark" {
+				if !isStaging() {
+					writeError(w, http.StatusForbidden, "forbidden: benchmark origin restricted to staging")
+					return
+				}
 				if !isOperatorOrApprover(claims) {
 					writeError(w, http.StatusForbidden, "forbidden: benchmark noCache requires approver role")
 					return
