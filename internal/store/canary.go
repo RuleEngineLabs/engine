@@ -147,24 +147,3 @@ func (s *PolicyStore) ExtendCanary(name string, percent int) (*CanaryRecord, err
 	return rec, nil
 }
 
-// CancelCanary cancels an active canary deployment, reverting 100% traffic to STABLE.
-// Returns ErrCanaryNotFound if no active canary exists.
-func (s *PolicyStore) CancelCanary(name, reason string) (*CanaryRecord, error) {
-	key := strings.ToLower(name)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	rec, ok := s.canaries[key]
-	if !ok || rec.Status != CanaryStatusActive || !rec.ExpiresAt.After(time.Now()) {
-		if ok && rec.Status == CanaryStatusActive && !rec.ExpiresAt.After(time.Now()) {
-			rec.Status = CanaryStatusCompleted
-			rec.GsiActiveStatus = ""
-		}
-		return nil, ErrCanaryNotFound{Name: name}
-	}
-
-	rec.Status = CanaryStatusCancelled
-	rec.GsiActiveStatus = ""
-	rec.CancelReason = reason
-	return rec, nil
-}
