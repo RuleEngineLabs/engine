@@ -38,6 +38,11 @@ func handlePromote(ps *store.PolicyStore) http.HandlerFunc {
 				writeError(w, http.StatusConflict, errNotApproved.Error())
 				return
 			}
+			var errNoWindow store.ErrCoexistenceWindowNotSet
+			if errors.As(err, &errNoWindow) {
+				writeError(w, http.StatusUnprocessableEntity, errNoWindow.Error())
+				return
+			}
 			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
