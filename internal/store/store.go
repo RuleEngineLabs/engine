@@ -58,6 +58,7 @@ type PolicyStore struct {
 	meta     map[string]*PolicyMeta      // key: normalized name → policy meta config
 	history  map[string][]*VersionRecord // key: normalized name → ordered version history
 	auditLog []*RemovalAuditEntry
+	canaries map[string]*CanaryRecord    // key: normalized name → active canary
 }
 
 // New returns an initialized PolicyStore.
@@ -70,6 +71,7 @@ func New() *PolicyStore {
 		meta:     make(map[string]*PolicyMeta),
 		history:  make(map[string][]*VersionRecord),
 		auditLog: nil,
+		canaries: make(map[string]*CanaryRecord),
 	}
 }
 
