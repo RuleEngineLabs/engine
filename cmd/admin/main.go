@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/RuleEngineLabs/engine/internal/ratelimit"
+	"github.com/RuleEngineLabs/engine/internal/sandbox"
 	"github.com/RuleEngineLabs/engine/internal/store"
 )
 
@@ -35,13 +36,22 @@ func newAdminMux(ps *store.PolicyStore, rl *ratelimit.Limiter) *http.ServeMux {
 	return mux
 }
 
+// registerSandboxRoutes adds the sandbox mapping publish endpoint to an existing mux.
+// Call after newAdminMux when a sandbox.S3Publisher is available.
+func registerSandboxRoutes(mux *http.ServeMux, ps *store.PolicyStore, pub *sandbox.S3Publisher) {
+	mux.HandleFunc("PUT /policies/{name}/sandbox/connections/{service}", handlePublishSandboxMapping(ps, pub))
+}
+
 func buildServer(addr string) (string, http.Handler) {
 	if addr == "" {
 		addr = ":8081"
 	}
 	ps := store.New()
 	rl := ratelimit.New(time.Second, 10)
-	return addr, newAdminMux(ps, rl)
+	mux := newAdminMux(ps, rl)
+	// In production the S3Publisher is nil (bucket not yet provisioned via EPIC-011);
+	// the route is registered without effect until the publisher is wired.
+	return addr, mux
 }
 
 func main() {
