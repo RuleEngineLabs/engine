@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/expr-lang/expr"
 	"github.com/RuleEngineLabs/engine/internal/compiler"
 	"github.com/RuleEngineLabs/engine/internal/policy"
+	"github.com/RuleEngineLabs/engine/internal/sandbox"
 )
 
 const maxSteps = 1000
@@ -40,8 +42,9 @@ type ResultCache interface {
 
 // Executor runs policy state machines.
 type Executor struct {
-	client *http.Client
-	cache  ResultCache
+	client  *http.Client
+	cache   ResultCache
+	sandbox sandbox.Loader
 }
 
 // Option configures an Executor.
@@ -55,6 +58,12 @@ func WithHTTPClient(c *http.Client) Option {
 // WithCache provides a ResultCache for apiCall states.
 func WithCache(c ResultCache) Option {
 	return func(e *Executor) { e.cache = c }
+}
+
+// WithSandboxLoader enables sandbox write simulation in Preview mode.
+// When set, write states in /preview resolve against the loader instead of being blocked.
+func WithSandboxLoader(l sandbox.Loader) Option {
+	return func(e *Executor) { e.sandbox = l }
 }
 
 // New creates an Executor with optional configuration.
@@ -175,11 +184,23 @@ func (e *Executor) Preview(ctx context.Context, art *compiler.Artifact, input an
 				method = http.MethodGet
 			}
 			if isWriteMethod(method) {
-				// Block write without executing; mark as preview_blocked_write
-				if s.ContextKey != "" {
-					env["contextKey"].(map[string]any)[s.ContextKey] = "preview_blocked_write"
+				if e.sandbox != nil {
+					// Sandbox mode: resolve the write against the mapping store.
+					sandboxResp, err := e.resolveSandbox(ctx, s, method, env)
+					if err != nil {
+						return Result{}, err
+					}
+					if s.ContextKey != "" {
+						env["contextKey"].(map[string]any)[s.ContextKey] = sandboxResp
+					}
+					trace = append(trace, TraceEntry{StateID: s.ID, DurationMs: time.Since(start).Milliseconds()})
+				} else {
+					// No sandbox loader: block write and mark contextKey as preview_blocked_write.
+					if s.ContextKey != "" {
+						env["contextKey"].(map[string]any)[s.ContextKey] = "preview_blocked_write"
+					}
+					trace = append(trace, TraceEntry{StateID: s.ID, DurationMs: 0, Blocked: true})
 				}
-				trace = append(trace, TraceEntry{StateID: s.ID, DurationMs: 0, Blocked: true})
 			} else {
 				if err := e.runAPICall(ctx, s, env); err != nil {
 					if s.Fallback != "" {
@@ -221,6 +242,36 @@ func (e *Executor) Preview(ctx context.Context, art *compiler.Artifact, input an
 	}
 
 	return Result{}, fmt.Errorf("execution exceeded maximum steps (%d)", maxSteps)
+}
+
+// resolveSandbox calls the sandbox Loader for a write state in preview mode.
+// It returns the response body as a parsed any (for contextKey injection), or an error
+// carrying the sandbox sentinel values (ErrMappingNotFound / ErrSandboxUnavailable).
+func (e *Executor) resolveSandbox(ctx context.Context, s *policy.State, method string, env map[string]any) (any, error) {
+	// Extract body from env so matchers can match on it.
+	var body map[string]any
+	if input, ok := env["input"]; ok {
+		if m, ok := input.(map[string]any); ok {
+			body = m
+		}
+	}
+
+	resp, err := e.sandbox.Resolve(ctx, method, s.URL, body)
+	if err != nil {
+		if errors.Is(err, sandbox.ErrMappingNotFound) {
+			return nil, fmt.Errorf("state %q: %w", s.ID, sandbox.ErrMappingNotFound)
+		}
+		return nil, fmt.Errorf("state %q: %w", s.ID, sandbox.ErrSandboxUnavailable)
+	}
+
+	if resp.Body == nil {
+		return nil, nil
+	}
+	var parsed any
+	if err := json.Unmarshal(resp.Body, &parsed); err != nil {
+		return nil, fmt.Errorf("state %q: sandbox response decode: %w", s.ID, err)
+	}
+	return parsed, nil
 }
 
 func isWriteMethod(method string) bool {
