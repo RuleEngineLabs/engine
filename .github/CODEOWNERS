@@ -1,0 +1,5 @@
+# CODEOWNERS — every change requires review from the project owner.
+# @LucasLimaLL is both the human owner and the identity used by the agent token.
+# Branch protection on `main` enforces this for release merges.
+# Feature → develop merges remain autonomous (no protection on develop).
+* @LucasLimaLL
