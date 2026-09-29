@@ -24,6 +24,13 @@ go build ./cmd/engine
 go build ./cmd/admin
 ```
 
+## Identidade do agente
+
+Operações automatizadas (PRs, merges feature→develop) são realizadas por `ruleenginelabs-agent[bot]` (GitHub App ID 5063188).  
+`@LucasLimaLL` aparece apenas no CODEOWNERS como revisor humano de releases (develop→main).
+
+O token de instalação é gerado via RS256 JWT, renovado automaticamente no início de cada sessão pelo hook `SessionStart` (`ensure-agent-token.ps1`), e injetado via `~/.bashrc` antes de qualquer chamada `gh`.
+
 ## CI/CD
 
 | Branch | Trigger | Ação |
