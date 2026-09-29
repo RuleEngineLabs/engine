@@ -10,15 +10,7 @@ import (
 	"github.com/RuleEngineLabs/engine/internal/store"
 )
 
-func main() {
-	addr := os.Getenv("ADDR")
-	if addr == "" {
-		addr = ":8081"
-	}
-
-	ps := store.New()
-	rl := ratelimit.New(time.Second, 10) // 10 noCache calls/s per caller
-
+func newAdminMux(ps *store.PolicyStore, rl *ratelimit.Limiter) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /policies", handleList(ps))
 	mux.HandleFunc("POST /policies", handleCreate(ps))
@@ -36,9 +28,22 @@ func main() {
 	mux.HandleFunc("POST /policies/{name}/canary", handleStartCanary(ps))
 	mux.HandleFunc("PATCH /policies/{name}/canary", handleExtendCanary(ps))
 	mux.HandleFunc("DELETE /policies/{name}/canary", handleCancelCanary(ps))
+	return mux
+}
 
+func buildServer(addr string) (string, http.Handler) {
+	if addr == "" {
+		addr = ":8081"
+	}
+	ps := store.New()
+	rl := ratelimit.New(time.Second, 10)
+	return addr, newAdminMux(ps, rl)
+}
+
+func main() {
+	addr, handler := buildServer(os.Getenv("ADDR"))
 	slog.Info("admin starting", "addr", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := http.ListenAndServe(addr, handler); err != nil {
 		slog.Error("admin stopped", "err", err)
 		os.Exit(1)
 	}
