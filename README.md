@@ -112,6 +112,57 @@ docker run -p 9090:8081 engine:local
 | `ADDR` | `:8081` | Endereço de escuta do servidor |
 | `ENVIRONMENT` | — | `staging` habilita `origin=benchmark` no noCache |
 
+## Observabilidade
+
+### Formato dos logs
+
+O servidor emite logs estruturados em JSON (newline-delimited) no stdout:
+
+```json
+{"time":"2026-09-29T19:00:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4-e5f6-7890-ab12-cdef01234567","method":"POST","path":"/execute/abc","status":200,"duration_ms":3}
+{"time":"2026-09-29T19:00:00Z","level":"INFO","msg":"execute ok","request_id":"a1b2c3d4-e5f6-7890-ab12-cdef01234567","policy":"exemploPolicy","state":"inicio","duration_ms":2}
+```
+
+Campos presentes em toda linha de request:
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `request_id` | string | ID de correlação — propagado em todas as linhas do mesmo request |
+| `method` | string | Método HTTP |
+| `path` | string | Caminho da requisição |
+| `status` | int | Código HTTP retornado |
+| `duration_ms` | int | Tempo total de processamento em ms |
+
+Nível por faixa de status: `INFO` (2xx/3xx) · `WARN` (4xx) · `ERROR` (5xx).
+
+### Correlation ID
+
+Cada requisição recebe um `X-Request-ID` único. O cliente pode fornecer o próprio:
+
+```bash
+curl -X POST http://localhost:9090/execute/<ID> \
+  -H "X-Request-ID: meu-trace-123" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+# Response header: X-Request-ID: meu-trace-123
+# Todos os logs deste request terão: "request_id":"meu-trace-123"
+```
+
+Se o header não for enviado, o servidor gera um ID aleatório automaticamente.
+
+### Filtrando logs por request
+
+```bash
+# Todos os logs de um request específico
+./bin/admin | grep '"request_id":"meu-trace-123"'
+
+# Apenas erros
+./bin/admin | grep '"level":"ERROR"'
+
+# Com jq
+./bin/admin | jq 'select(.level == "ERROR") | {request_id, path, status, duration_ms}'
+```
+
 ## Desenvolvimento
 
 ```bash

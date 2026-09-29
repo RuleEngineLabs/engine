@@ -9,6 +9,15 @@ import (
 	"testing"
 )
 
+// newJSONLogBuffer captures slog output using the JSON handler.
+func newJSONLogBuffer() (*bytes.Buffer, func()) {
+	buf := &bytes.Buffer{}
+	h := slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	old := slog.Default()
+	slog.SetDefault(slog.New(h))
+	return buf, func() { slog.SetDefault(old) }
+}
+
 // logBuffer captures slog output for assertions.
 func newLogBuffer() (*bytes.Buffer, func()) {
 	buf := &bytes.Buffer{}
@@ -139,5 +148,73 @@ func TestLogRequests_IntegrationWithMux(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "/health") {
 		t.Fatalf("expected /health in log")
+	}
+}
+
+func TestWithCorrelationID_EchoesProvidedID(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Header.Set("X-Request-ID", "test-id-123")
+
+	withCorrelationID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("X-Request-ID"); got != "test-id-123" {
+		t.Fatalf("expected X-Request-ID=test-id-123, got: %s", got)
+	}
+}
+
+func TestWithCorrelationID_GeneratesIDWhenAbsent(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+
+	withCorrelationID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rr, req)
+
+	id := rr.Header().Get("X-Request-ID")
+	if id == "" {
+		t.Fatal("expected generated X-Request-ID, got empty")
+	}
+}
+
+func TestWithCorrelationID_LogsIncludeRequestID(t *testing.T) {
+	buf, restore := newJSONLogBuffer()
+	defer restore()
+
+	handler := withCorrelationID(logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Header.Set("X-Request-ID", "corr-abc")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	log := buf.String()
+	if !strings.Contains(log, `"request_id":"corr-abc"`) {
+		t.Fatalf("expected request_id in JSON log, got: %s", log)
+	}
+}
+
+func TestWithCorrelationID_LogsAreJSON(t *testing.T) {
+	buf, restore := newJSONLogBuffer()
+	defer restore()
+
+	handler := withCorrelationID(logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})))
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	log := strings.TrimSpace(buf.String())
+	if !strings.HasPrefix(log, "{") || !strings.HasSuffix(log, "}") {
+		t.Fatalf("expected JSON log line, got: %s", log)
+	}
+	if !strings.Contains(log, `"level"`) || !strings.Contains(log, `"msg"`) {
+		t.Fatalf("expected JSON fields level+msg, got: %s", log)
 	}
 }

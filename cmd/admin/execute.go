@@ -15,6 +15,7 @@ import (
 	"github.com/RuleEngineLabs/engine/internal/store"
 )
 
+
 // isStaging reports whether the current environment is staging.
 // Reads ENVIRONMENT env var; accepts "staging" (case-insensitive) or "homologacao".
 // Exported as a variable so tests can override it.
@@ -73,19 +74,20 @@ func handleExecute(ps *store.PolicyStore, rl *ratelimit.Limiter) http.HandlerFun
 			}
 		}
 
+		log := loggerFromContext(r.Context())
 		start := time.Now()
 		result, err := executor.Execute(r.Context(), rec.Artifact, input)
 		durationMs := time.Since(start).Milliseconds()
 		if err != nil {
-			slog.Error("execute failed", "policy", rec.Name, "err", err)
+			log.Error("execute failed", "policy", rec.Name, "err", err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		slog.Info("execute ok", "policy", rec.Name, "state", result.State, "duration_ms", durationMs)
+		log.Info("execute ok", "policy", rec.Name, "state", result.State, "duration_ms", durationMs)
 
 		// Fire shadow execution asynchronously — consumer always gets STABLE response.
 		if shadow, ok := ps.GetActiveShadow(rec.Name); ok {
-			go runShadow(ps, rec.Name, rec.StableVersion, shadow, input, result)
+			go runShadow(ps, rec.Name, rec.StableVersion, shadow, input, result, log)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -107,7 +109,7 @@ func isOperatorOrApprover(claims *auth.Claims) bool {
 
 // runShadow executes the candidate artifact in a goroutine and logs a divergence
 // if its output differs from the STABLE result (or if the candidate errors).
-func runShadow(ps *store.PolicyStore, policyName, stableVersion string, shadow *store.ShadowRecord, input any, stableResult executor.Result) {
+func runShadow(ps *store.PolicyStore, policyName, stableVersion string, shadow *store.ShadowRecord, input any, stableResult executor.Result, log *slog.Logger) {
 	candResult, err := executor.Execute(context.Background(), shadow.CandidateArtifact, input)
 
 	d := &store.ShadowDivergence{
@@ -121,7 +123,7 @@ func runShadow(ps *store.PolicyStore, policyName, stableVersion string, shadow *
 	if err != nil {
 		d.CandidateError = err.Error()
 		ps.LogDivergence(d)
-		slog.Warn("shadow divergence (candidate error)",
+		log.Warn("shadow divergence (candidate error)",
 			"policy", policyName,
 			"stable_version", stableVersion,
 			"candidate_version", shadow.CandidateVersion,
@@ -135,7 +137,7 @@ func runShadow(ps *store.PolicyStore, policyName, stableVersion string, shadow *
 	if !bytes.Equal(stableJSON, candJSON) {
 		d.CandidateOutput = candResult.Data
 		ps.LogDivergence(d)
-		slog.Warn("shadow divergence (output mismatch)",
+		log.Warn("shadow divergence (output mismatch)",
 			"policy", policyName,
 			"stable_version", stableVersion,
 			"candidate_version", shadow.CandidateVersion,
