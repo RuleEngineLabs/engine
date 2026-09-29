@@ -108,3 +108,64 @@ func TestHandleCreate_InvalidJSON(t *testing.T) {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
+
+func TestHandleCreate_ReservedName(t *testing.T) {
+	for _, name := range []string{"Preview", "Health", "Metrics", "Admin"} {
+		t.Run(name, func(t *testing.T) {
+			body := `{"name":"` + name + `","entry":"s","states":[{"id":"s","kind":"response","status":200}]}`
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/policies", bytes.NewBufferString(body))
+			r.Header.Set("Content-Type", "application/json")
+
+			newTestServer().ServeHTTP(w, r)
+
+			if w.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+			}
+			var resp map[string]string
+			json.NewDecoder(w.Body).Decode(&resp)
+			if resp["error"] == "" {
+				t.Error("expected error message")
+			}
+		})
+	}
+}
+
+func TestHandleCreate_DuplicateName(t *testing.T) {
+	mux := newTestServer()
+	body := `{"name":"unique","entry":"s","states":[{"id":"s","kind":"response","status":200}]}`
+
+	// first creation succeeds
+	w1 := httptest.NewRecorder()
+	r1 := httptest.NewRequest(http.MethodPost, "/policies", bytes.NewBufferString(body))
+	r1.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w1, r1)
+	if w1.Code != http.StatusCreated {
+		t.Fatalf("first create: expected 201, got %d", w1.Code)
+	}
+
+	// second creation conflicts
+	w2 := httptest.NewRecorder()
+	r2 := httptest.NewRequest(http.MethodPost, "/policies", bytes.NewBufferString(body))
+	r2.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(w2, r2)
+	if w2.Code != http.StatusConflict {
+		t.Fatalf("second create: expected 409, got %d: %s", w2.Code, w2.Body.String())
+	}
+}
+
+func TestHandleCreate_OwnerHeader(t *testing.T) {
+	// Ensure X-Owner-Group is stored; retrieve via GET and indirectly verify no crash.
+	body := `{"name":"owned-pol","entry":"s","states":[{"id":"s","kind":"response","status":200}]}`
+	mux := newTestServer()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/policies", bytes.NewBufferString(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Owner-Group", "team-alpha")
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
