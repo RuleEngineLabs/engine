@@ -232,6 +232,55 @@ func TestCompile_ContextKeyRefProducedByMapState(t *testing.T) {
 	}
 }
 
+func TestCompile_ParallelMissingMaxConcurrency(t *testing.T) {
+	p := &policy.Policy{
+		ID:    "p8",
+		Entry: "par",
+		States: []policy.State{
+			{
+				ID:   "par",
+				Kind: policy.KindParallel,
+				Over: "input.items",
+				// MaxConcurrency intentionally missing (0)
+				Transitions: []policy.Transition{
+					{When: "true", To: "ok"},
+				},
+			},
+			{ID: "ok", Kind: policy.KindResponse, Status: 200},
+		},
+	}
+	_, err := compiler.Compile(p)
+	if err == nil {
+		t.Fatal("expected error for parallel state without maxConcurrency")
+	}
+	if !containsSubstr(err.Error(), "maxConcurrency") {
+		t.Errorf("expected error to mention maxConcurrency, got: %v", err)
+	}
+}
+
+func TestCompile_ParallelWithMaxConcurrency(t *testing.T) {
+	p := &policy.Policy{
+		ID:    "p9",
+		Entry: "par",
+		States: []policy.State{
+			{
+				ID:             "par",
+				Kind:           policy.KindParallel,
+				Over:           "input.items",
+				MaxConcurrency: 3,
+				ContextKey:     "results",
+				Transitions: []policy.Transition{
+					{When: "true", To: "ok"},
+				},
+			},
+			{ID: "ok", Kind: policy.KindResponse, Status: 200},
+		},
+	}
+	if _, err := compiler.Compile(p); err != nil {
+		t.Fatalf("expected no error for valid parallel state, got %v", err)
+	}
+}
+
 func containsSubstr(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsAt(s, sub))
 }
