@@ -4,17 +4,36 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/RuleEngineLabs/engine/internal/compiler"
 	"github.com/RuleEngineLabs/engine/internal/policy"
 )
 
+// reservedPolicyNames are policy names the system reserves for internal use.
+var reservedPolicyNames = map[string]struct{}{
+	"Preview": {}, "Health": {}, "Metrics": {}, "Admin": {},
+}
+
+// ErrNameReserved is returned when a policy name collides with a reserved name.
+type ErrNameReserved struct{ Name string }
+
+func (e ErrNameReserved) Error() string {
+	return fmt.Sprintf("policy name %s is reserved", e.Name)
+}
+
+// ErrNameExists is returned when a policy with the same name already exists.
+type ErrNameExists struct{ Name string }
+
+func (e ErrNameExists) Error() string { return "policy already exists" }
+
 // PolicyRecord holds the stored data for a single policy publication.
 type PolicyRecord struct {
 	PolicyID string
 	Version  int
 	Name     string
+	Owner    string
 	Policy   *policy.Policy
 	Artifact *compiler.Artifact
 }
@@ -23,29 +42,47 @@ type PolicyRecord struct {
 // It is safe for concurrent use.
 type PolicyStore struct {
 	mu      sync.RWMutex
-	records map[string]*PolicyRecord
+	records map[string]*PolicyRecord // key: policyId
+	byName  map[string]*PolicyRecord // key: normalized name
 }
 
 // New returns an initialized PolicyStore.
 func New() *PolicyStore {
-	return &PolicyStore{records: make(map[string]*PolicyRecord)}
+	return &PolicyStore{
+		records: make(map[string]*PolicyRecord),
+		byName:  make(map[string]*PolicyRecord),
+	}
 }
 
-// Create stores a compiled artifact and returns the assigned policyId and version.
-func (s *PolicyStore) Create(name string, art *compiler.Artifact) (policyID string, version int, err error) {
+// Create validates and stores a compiled artifact, returning the assigned policyId and version.
+// Returns ErrNameReserved if the name is reserved, ErrNameExists if the name is taken.
+func (s *PolicyStore) Create(name, owner string, art *compiler.Artifact) (policyID string, version int, err error) {
+	if _, reserved := reservedPolicyNames[name]; reserved {
+		return "", 0, ErrNameReserved{Name: name}
+	}
+
 	id, err := generateID()
 	if err != nil {
 		return "", 0, fmt.Errorf("store: generate id: %w", err)
 	}
+
 	rec := &PolicyRecord{
 		PolicyID: id,
 		Version:  1,
 		Name:     name,
+		Owner:    owner,
 		Policy:   art.Policy,
 		Artifact: art,
 	}
+
+	normalized := strings.ToLower(name)
 	s.mu.Lock()
+	if _, exists := s.byName[normalized]; exists {
+		s.mu.Unlock()
+		return "", 0, ErrNameExists{Name: name}
+	}
 	s.records[id] = rec
+	s.byName[normalized] = rec
 	s.mu.Unlock()
 	return id, 1, nil
 }

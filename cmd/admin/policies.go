@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/RuleEngineLabs/engine/internal/compiler"
@@ -44,8 +45,19 @@ func handleCreate(ps *store.PolicyStore) http.HandlerFunc {
 			return
 		}
 
-		policyID, version, err := ps.Create(req.Name, art)
+		owner := r.Header.Get("X-Owner-Group")
+		policyID, version, err := ps.Create(req.Name, owner, art)
 		if err != nil {
+			var errReserved store.ErrNameReserved
+			if errors.As(err, &errReserved) {
+				writeError(w, http.StatusUnprocessableEntity, errReserved.Error())
+				return
+			}
+			var errExists store.ErrNameExists
+			if errors.As(err, &errExists) {
+				writeError(w, http.StatusConflict, errExists.Error())
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "failed to store policy")
 			return
 		}
