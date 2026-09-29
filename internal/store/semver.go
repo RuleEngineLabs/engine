@@ -76,6 +76,13 @@ func (s *PolicyStore) Promote(name, bump string) (string, error) {
 		return "", ErrDraftNotApproved{Name: name}
 	}
 
+	if bump == "major" {
+		m := s.meta[key]
+		if m == nil || m.CoexistenceWindowSeconds == 0 {
+			return "", ErrCoexistenceWindowNotSet{Name: name}
+		}
+	}
+
 	newVer, err := bumpSemVer(dr.BaseVersion, bump)
 	if err != nil {
 		return "", err
