@@ -31,12 +31,13 @@ func (e ErrNameExists) Error() string { return "policy already exists" }
 
 // PolicyRecord holds the stored data for a single policy publication.
 type PolicyRecord struct {
-	PolicyID string
-	Version  int
-	Name     string
-	Owner    string
-	Policy   *policy.Policy
-	Artifact *compiler.Artifact
+	PolicyID      string
+	Version       int
+	Name          string
+	Owner         string
+	StableVersion string // semver of the current STABLE release, e.g. "1.2.1"
+	Policy        *policy.Policy
+	Artifact      *compiler.Artifact
 }
 
 // versionPtr holds the current version atomically for a single policyId.
@@ -53,6 +54,7 @@ type PolicyStore struct {
 	records  map[string]*PolicyRecord // key: policyId (all versions, latest wins)
 	byName   map[string]*PolicyRecord // key: normalized name (lowercase)
 	versions map[string]*versionPtr   // key: policyId → current version pointer
+	drafts   map[string]*DraftRecord  // key: normalized name → pending draft
 }
 
 // New returns an initialized PolicyStore.
@@ -61,6 +63,7 @@ func New() *PolicyStore {
 		records:  make(map[string]*PolicyRecord),
 		byName:   make(map[string]*PolicyRecord),
 		versions: make(map[string]*versionPtr),
+		drafts:   make(map[string]*DraftRecord),
 	}
 }
 
