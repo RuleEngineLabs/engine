@@ -60,6 +60,9 @@ func validate(p *policy.Policy) error {
 			return fmt.Errorf("duplicate state id %q", s.ID)
 		}
 		seen[s.ID] = struct{}{}
+		if phaseErr := kindPhaseError(s.Kind); phaseErr != nil {
+			return fmt.Errorf("state %q: %w", s.ID, phaseErr)
+		}
 		if !isSupportedKind(s.Kind) {
 			return fmt.Errorf("state %q: unsupported kind %q", s.ID, s.Kind)
 		}
@@ -146,9 +149,20 @@ func detectCycle(start string, adj map[string][]string) string {
 	return dfs(start)
 }
 
+// kindPhaseError returns an error for kinds that are defined but not yet
+// available in the current phase, so callers get a phase-specific message
+// instead of a generic "unsupported" one.
+func kindPhaseError(k policy.Kind) error {
+	switch k {
+	case policy.KindDBQuery:
+		return fmt.Errorf("kind %q not supported in current phase", k)
+	}
+	return nil
+}
+
 func isSupportedKind(k policy.Kind) bool {
 	switch k {
-	case policy.KindExecution, policy.KindAPICall, policy.KindDBQuery,
+	case policy.KindExecution, policy.KindAPICall,
 		policy.KindParallel, policy.KindResponse, policy.KindMap:
 		return true
 	}
