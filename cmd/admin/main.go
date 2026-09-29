@@ -33,6 +33,7 @@ func newAdminMux(ps *store.PolicyStore, rl *ratelimit.Limiter) *http.ServeMux {
 	mux.HandleFunc("DELETE /policies/{name}/shadow", handleStopShadow(ps))
 	mux.HandleFunc("GET /policies/{name}/shadow/divergences", handleGetDivergences(ps))
 	mux.HandleFunc("POST /policies/{name}/shadow/promote", handlePromoteShadow(ps))
+	mux.HandleFunc("GET /health", handleHealth())
 	return mux
 }
 
