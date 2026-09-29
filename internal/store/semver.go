@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/RuleEngineLabs/engine/internal/compiler"
 	"github.com/RuleEngineLabs/engine/internal/policy"
@@ -33,7 +34,8 @@ func (e ErrDraftNotApproved) Error() string {
 	return "draft must be approved before promotion"
 }
 
-// UpsertDraft stores a new draft (or replaces an existing one) for the named policy.
+// UpsertDraft stores a new draft (or replaces an existing one) for the named policy,
+// and appends a DRAFT entry to the version history.
 func (s *PolicyStore) UpsertDraft(name, baseVersion string, p *policy.Policy, art *compiler.Artifact) {
 	key := strings.ToLower(name)
 	s.mu.Lock()
@@ -44,6 +46,15 @@ func (s *PolicyStore) UpsertDraft(name, baseVersion string, p *policy.Policy, ar
 		Policy:      p,
 		Artifact:    art,
 	}
+	vNum := len(s.history[key]) + 1
+	s.history[key] = append(s.history[key], &VersionRecord{
+		PolicyName:  name,
+		Version:     vNum,
+		Status:      VersionStatusDraft,
+		ContentHash: hashPolicy(p),
+		CreatedAt:   time.Now(),
+		Policy:      p,
+	})
 	s.mu.Unlock()
 }
 
@@ -91,6 +102,29 @@ func (s *PolicyStore) Promote(name, bump string) (string, error) {
 	// Update the STABLE semver on the existing policy record if present.
 	if rec, ok := s.byName[key]; ok {
 		rec.StableVersion = newVer
+	}
+
+	// Update the most-recent DRAFT history entry to STABLE, or append a new one.
+	updated := false
+	for i := len(s.history[key]) - 1; i >= 0; i-- {
+		if s.history[key][i].Status == VersionStatusDraft || s.history[key][i].Status == VersionStatusApproved {
+			s.history[key][i].Status = VersionStatusStable
+			s.history[key][i].SemVersion = newVer
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		vNum := len(s.history[key]) + 1
+		s.history[key] = append(s.history[key], &VersionRecord{
+			PolicyName:  name,
+			Version:     vNum,
+			SemVersion:  newVer,
+			Status:      VersionStatusStable,
+			ContentHash: hashPolicy(dr.Policy),
+			CreatedAt:   time.Now(),
+			Policy:      dr.Policy,
+		})
 	}
 
 	// Draft consumed; remove it.

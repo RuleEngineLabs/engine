@@ -51,11 +51,12 @@ type versionPtr struct {
 // It is safe for concurrent use.
 type PolicyStore struct {
 	mu       sync.RWMutex
-	records  map[string]*PolicyRecord // key: policyId (all versions, latest wins)
-	byName   map[string]*PolicyRecord // key: normalized name (lowercase)
-	versions map[string]*versionPtr   // key: policyId → current version pointer
-	drafts   map[string]*DraftRecord  // key: normalized name → pending draft
-	meta     map[string]*PolicyMeta   // key: normalized name → policy meta config
+	records  map[string]*PolicyRecord   // key: policyId (all versions, latest wins)
+	byName   map[string]*PolicyRecord   // key: normalized name (lowercase)
+	versions map[string]*versionPtr     // key: policyId → current version pointer
+	drafts   map[string]*DraftRecord    // key: normalized name → pending draft
+	meta     map[string]*PolicyMeta     // key: normalized name → policy meta config
+	history  map[string][]*VersionRecord // key: normalized name → ordered version history
 }
 
 // New returns an initialized PolicyStore.
@@ -66,6 +67,7 @@ func New() *PolicyStore {
 		versions: make(map[string]*versionPtr),
 		drafts:   make(map[string]*DraftRecord),
 		meta:     make(map[string]*PolicyMeta),
+		history:  make(map[string][]*VersionRecord),
 	}
 }
 
