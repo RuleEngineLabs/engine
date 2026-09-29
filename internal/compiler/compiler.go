@@ -24,6 +24,13 @@ type Artifact struct {
 	programs map[string]*vm.Program
 }
 
+// Program returns the compiled expression program for a state transition.
+// Key format: "stateID:transitionIndex".
+func (a *Artifact) Program(key string) (*vm.Program, bool) {
+	p, ok := a.programs[key]
+	return p, ok
+}
+
 // Compile validates and compiles a policy into an Artifact.
 // Rejects policies with unsupported kinds, duplicate state IDs, reserved contextKeys,
 // cyclic graphs, undeclared contextKey field references, and invalid expressions.
