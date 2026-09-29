@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// ErrCannotDeleteStable is returned when attempting to delete a STABLE version.
+type ErrCannotDeleteStable struct{ Name, Version string }
+
+func (e ErrCannotDeleteStable) Error() string {
+	return "cannot delete STABLE version with active consumers"
+}
+
 // VersionStatus represents the lifecycle state of a stored version.
 type VersionStatus string
 
@@ -71,6 +78,48 @@ func (s *PolicyStore) GetVersion(name, version string) (*VersionRecord, bool) {
 		}
 	}
 	return nil, false
+}
+
+// MarkVersionRemoved marks the specified version as REMOVED with the given reason.
+// Returns ErrCannotDeleteStable if the version is STABLE.
+// requestedBy is recorded in the audit log.
+func (s *PolicyStore) MarkVersionRemoved(name, version, reason, requestedBy string) error {
+	key := strings.ToLower(name)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	recs := s.history[key]
+	isSemVer := strings.Contains(version, ".")
+	var found *VersionRecord
+	for _, r := range recs {
+		if isSemVer {
+			if r.SemVersion == version {
+				found = r
+				break
+			}
+		} else {
+			if fmt.Sprintf("%d", r.Version) == version {
+				found = r
+				break
+			}
+		}
+	}
+	if found == nil {
+		return fmt.Errorf("version %q not found for policy %q", version, name)
+	}
+	if found.Status == VersionStatusStable {
+		return ErrCannotDeleteStable{Name: name, Version: version}
+	}
+	found.Status = VersionStatusRemoved
+	found.RemovalNote = reason
+	s.auditLog = append(s.auditLog, &RemovalAuditEntry{
+		PolicyName:  name,
+		Version:     version,
+		Reason:      reason,
+		RequestedBy: requestedBy,
+		Timestamp:   time.Now(),
+	})
+	return nil
 }
 
 // hashPolicy returns the SHA-256 hex digest of the policy's JSON representation.

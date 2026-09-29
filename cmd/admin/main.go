@@ -25,6 +25,7 @@ func main() {
 	mux.HandleFunc("POST /execute/{id}", handleExecute(ps))
 	mux.HandleFunc("POST /policies/{name}/versions", handlePromote(ps))
 	mux.HandleFunc("POST /policies/{name}/versions/{version}/approve", handleApproveDraft(ps))
+	mux.HandleFunc("DELETE /policies/{name}/versions/{version}", handleDeleteVersion(ps))
 	mux.HandleFunc("GET /policies/{name}/versions", handleListVersions(ps))
 	mux.HandleFunc("GET /policies/{name}/versions/{version}", handleGetVersion(ps))
 	mux.HandleFunc("PATCH /policies/{name}/meta", handleSetMeta(ps))
