@@ -117,6 +117,10 @@ func TestHandleExecute_NoCacheBenchmark_ForbiddenWithoutApprover(t *testing.T) {
 }
 
 func TestHandleExecute_NoCacheBenchmark_GlobalOperatorAllowed(t *testing.T) {
+	// benchmark origin requires staging environment (US-029)
+	isStaging = func() bool { return true }
+	t.Cleanup(func() { isStaging = func() bool { return false } })
+
 	v := &auth.HMACVerifier{Secret: noCacheAuthSecret}
 	srv, id := newNoCacheServer(nil, v)
 
