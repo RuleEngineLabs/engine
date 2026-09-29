@@ -51,9 +51,28 @@ func TestCompile_UnknownEntry(t *testing.T) {
 
 func TestCompile_UnsupportedKind(t *testing.T) {
 	p := okPolicy()
-	p.States[0].Kind = "unknownKind"
-	if _, err := compiler.Compile(p); err == nil {
-		t.Fatal("expected error for unsupported kind")
+	p.States[0].Kind = "magicQuery"
+	_, err := compiler.Compile(p)
+	if err == nil {
+		t.Fatal("expected error for unknown kind")
+	}
+	if !containsSubstr(err.Error(), "magicQuery") {
+		t.Errorf("expected error to mention kind name, got: %v", err)
+	}
+}
+
+func TestCompile_DBQueryNotSupportedInCurrentPhase(t *testing.T) {
+	p := okPolicy()
+	p.States[0].Kind = policy.KindDBQuery
+	_, err := compiler.Compile(p)
+	if err == nil {
+		t.Fatal("expected error for dbQuery kind")
+	}
+	if !containsSubstr(err.Error(), "current phase") {
+		t.Errorf("expected phase-specific error, got: %v", err)
+	}
+	if !containsSubstr(err.Error(), "dbQuery") {
+		t.Errorf("expected error to mention 'dbQuery', got: %v", err)
 	}
 }
 
