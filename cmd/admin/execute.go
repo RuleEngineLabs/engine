@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/RuleEngineLabs/engine/internal/auth"
 	"github.com/RuleEngineLabs/engine/internal/executor"
@@ -62,6 +65,11 @@ func handleExecute(ps *store.PolicyStore, rl *ratelimit.Limiter) http.HandlerFun
 			return
 		}
 
+		// Fire shadow execution asynchronously — consumer always gets STABLE response.
+		if shadow, ok := ps.GetActiveShadow(rec.Name); ok {
+			go runShadow(ps, rec.Name, rec.StableVersion, shadow, input, result)
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
 	}
@@ -77,6 +85,34 @@ func isOperatorOrApprover(claims *auth.Claims) bool {
 		}
 	}
 	return false
+}
+
+// runShadow executes the candidate artifact in a goroutine and logs a divergence
+// if its output differs from the STABLE result (or if the candidate errors).
+func runShadow(ps *store.PolicyStore, policyName, stableVersion string, shadow *store.ShadowRecord, input any, stableResult executor.Result) {
+	candResult, err := executor.Execute(context.Background(), shadow.CandidateArtifact, input)
+
+	d := &store.ShadowDivergence{
+		Timestamp:        time.Now(),
+		PolicyName:       policyName,
+		StableVersion:    stableVersion,
+		CandidateVersion: shadow.CandidateVersion,
+		StableOutput:     stableResult.Data,
+	}
+
+	if err != nil {
+		d.CandidateError = err.Error()
+		ps.LogDivergence(d)
+		return
+	}
+
+	stableJSON, _ := json.Marshal(stableResult.Data)
+	candJSON, _ := json.Marshal(candResult.Data)
+	if !bytes.Equal(stableJSON, candJSON) {
+		d.CandidateOutput = candResult.Data
+		ps.LogDivergence(d)
+	}
+	// Identical outputs: no divergence record.
 }
 
 func noCacheCallerKey(r *http.Request, claims *auth.Claims) string {

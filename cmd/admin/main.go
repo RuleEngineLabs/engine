@@ -28,6 +28,9 @@ func newAdminMux(ps *store.PolicyStore, rl *ratelimit.Limiter) *http.ServeMux {
 	mux.HandleFunc("POST /policies/{name}/canary", handleStartCanary(ps))
 	mux.HandleFunc("PATCH /policies/{name}/canary", handleExtendCanary(ps))
 	mux.HandleFunc("DELETE /policies/{name}/canary", handleCancelCanary(ps))
+	mux.HandleFunc("POST /policies/{name}/shadow", handleStartShadow(ps))
+	mux.HandleFunc("DELETE /policies/{name}/shadow", handleStopShadow(ps))
+	mux.HandleFunc("GET /policies/{name}/shadow/divergences", handleGetDivergences(ps))
 	return mux
 }
 

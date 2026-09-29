@@ -57,8 +57,10 @@ type PolicyStore struct {
 	drafts   map[string]*DraftRecord     // key: normalized name → pending draft
 	meta     map[string]*PolicyMeta      // key: normalized name → policy meta config
 	history  map[string][]*VersionRecord // key: normalized name → ordered version history
-	auditLog []*RemovalAuditEntry
-	canaries map[string]*CanaryRecord    // key: normalized name → active canary
+	auditLog      []*RemovalAuditEntry
+	canaries      map[string]*CanaryRecord      // key: normalized name → active canary
+	shadows       map[string]*ShadowRecord      // key: normalized name → shadow deployment
+	divergenceLog map[string][]*ShadowDivergence // key: normalized name → divergence entries
 }
 
 // New returns an initialized PolicyStore.
@@ -71,7 +73,9 @@ func New() *PolicyStore {
 		meta:     make(map[string]*PolicyMeta),
 		history:  make(map[string][]*VersionRecord),
 		auditLog: nil,
-		canaries: make(map[string]*CanaryRecord),
+		canaries:      make(map[string]*CanaryRecord),
+		shadows:       make(map[string]*ShadowRecord),
+		divergenceLog: make(map[string][]*ShadowDivergence),
 	}
 }
 
