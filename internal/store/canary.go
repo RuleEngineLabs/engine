@@ -114,3 +114,26 @@ func (s *PolicyStore) GetActiveCanary(name string) (*CanaryRecord, bool) {
 	}
 	return rec, true
 }
+
+// CancelCanary cancels an active canary deployment, reverting 100% traffic to STABLE.
+// The sparse GSI attribute (GsiActiveStatus) is cleared so the item leaves the active index.
+// Returns ErrCanaryNotFound if no active canary exists.
+func (s *PolicyStore) CancelCanary(name, reason string) (*CanaryRecord, error) {
+	key := strings.ToLower(name)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rec, ok := s.canaries[key]
+	if !ok || rec.Status != CanaryStatusActive || !rec.ExpiresAt.After(time.Now()) {
+		if ok && rec.Status == CanaryStatusActive && !rec.ExpiresAt.After(time.Now()) {
+			rec.Status = CanaryStatusCompleted
+			rec.GsiActiveStatus = ""
+		}
+		return nil, ErrCanaryNotFound{Name: name}
+	}
+
+	rec.Status = CanaryStatusCancelled
+	rec.GsiActiveStatus = "" // removes sparse GSI attribute
+	rec.CancelReason = reason
+	return rec, nil
+}
