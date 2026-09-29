@@ -8,7 +8,8 @@ import (
 )
 
 type patchMetaRequest struct {
-	CoexistenceWindowSeconds int `json:"coexistence_window_seconds"`
+	CoexistenceWindowSeconds int      `json:"coexistence_window_seconds"`
+	Approvers                []string `json:"approvers"`
 }
 
 func handleSetMeta(ps *store.PolicyStore) http.HandlerFunc {
@@ -23,6 +24,7 @@ func handleSetMeta(ps *store.PolicyStore) http.HandlerFunc {
 
 		err := ps.SetMeta(name, &store.PolicyMeta{
 			CoexistenceWindowSeconds: req.CoexistenceWindowSeconds,
+			Approvers:                req.Approvers,
 		})
 		if err != nil {
 			writeError(w, http.StatusNotFound, err.Error())
