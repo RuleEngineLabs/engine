@@ -9,6 +9,7 @@ const (
 	KindDBQuery   Kind = "dbQuery"
 	KindParallel  Kind = "parallel"
 	KindResponse  Kind = "response"
+	KindMap       Kind = "map"
 )
 
 // Transition defines a conditional edge between states.

@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"regexp"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"
@@ -13,6 +14,9 @@ var reservedContextKeys = map[string]struct{}{
 	"input": {},
 }
 
+// contextKeyRef matches contextKey.fieldName in expressions.
+var contextKeyRef = regexp.MustCompile(`\bcontextKey\.(\w+)\b`)
+
 // Artifact is a compiled policy ready for execution.
 type Artifact struct {
 	Policy *policy.Policy
@@ -22,7 +26,7 @@ type Artifact struct {
 
 // Compile validates and compiles a policy into an Artifact.
 // Rejects policies with unsupported kinds, duplicate state IDs, reserved contextKeys,
-// cyclic graphs, and invalid expressions.
+// cyclic graphs, undeclared contextKey field references, and invalid expressions.
 func Compile(p *policy.Policy) (*Artifact, error) {
 	if err := validate(p); err != nil {
 		return nil, fmt.Errorf("compile: %w", err)
@@ -82,6 +86,33 @@ func validate(p *policy.Policy) error {
 		return fmt.Errorf("cycle detected: %s", cycle)
 	}
 
+	if err := checkContextKeyRefs(p); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// checkContextKeyRefs ensures every contextKey.X reference in transition expressions
+// is produced by at least one state in the policy via its ContextKey field.
+func checkContextKeyRefs(p *policy.Policy) error {
+	produced := make(map[string]struct{}, len(p.States))
+	for _, s := range p.States {
+		if s.ContextKey != "" {
+			produced[s.ContextKey] = struct{}{}
+		}
+	}
+
+	for _, s := range p.States {
+		for _, t := range s.Transitions {
+			for _, m := range contextKeyRef.FindAllStringSubmatch(t.When, -1) {
+				field := m[1]
+				if _, ok := produced[field]; !ok {
+					return fmt.Errorf("state %q references contextKey.%s which is never written by any state", s.ID, field)
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -95,7 +126,6 @@ func detectCycle(start string, adj map[string][]string) string {
 		path = append(path, n)
 		for _, nb := range adj[n] {
 			if color[nb] == 1 {
-				// found cycle: find where it starts in path
 				for i, v := range path {
 					if v == nb {
 						return fmt.Sprintf("%v → %s", path[i:], nb)
@@ -119,7 +149,7 @@ func detectCycle(start string, adj map[string][]string) string {
 func isSupportedKind(k policy.Kind) bool {
 	switch k {
 	case policy.KindExecution, policy.KindAPICall, policy.KindDBQuery,
-		policy.KindParallel, policy.KindResponse:
+		policy.KindParallel, policy.KindResponse, policy.KindMap:
 		return true
 	}
 	return false

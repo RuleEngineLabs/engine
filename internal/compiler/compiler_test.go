@@ -154,6 +154,65 @@ func TestCompile_ThreeStateChain(t *testing.T) {
 	}
 }
 
+func TestCompile_ContextKeyRefNeverWritten(t *testing.T) {
+	p := &policy.Policy{
+		ID:    "p6",
+		Entry: "check",
+		States: []policy.State{
+			{
+				ID:   "check",
+				Kind: policy.KindExecution,
+				Transitions: []policy.Transition{
+					{When: "contextKey.preco > 100", To: "ok"},
+				},
+				Fallback: "err",
+			},
+			{ID: "ok", Kind: policy.KindResponse, Status: 200},
+			{ID: "err", Kind: policy.KindResponse, Status: 500},
+		},
+	}
+	_, err := compiler.Compile(p)
+	if err == nil {
+		t.Fatal("expected error for contextKey.preco never written")
+	}
+	if !containsSubstr(err.Error(), "preco") {
+		t.Errorf("expected error to mention field 'preco', got: %v", err)
+	}
+	if !containsSubstr(err.Error(), "check") {
+		t.Errorf("expected error to mention state 'check', got: %v", err)
+	}
+}
+
+func TestCompile_ContextKeyRefProducedByMapState(t *testing.T) {
+	p := &policy.Policy{
+		ID:    "p7",
+		Entry: "mapPrices",
+		States: []policy.State{
+			{
+				ID:         "mapPrices",
+				Kind:       policy.KindMap,
+				ContextKey: "preco",
+				Transitions: []policy.Transition{
+					{When: "true", To: "checkPrice"},
+				},
+			},
+			{
+				ID:   "checkPrice",
+				Kind: policy.KindExecution,
+				Transitions: []policy.Transition{
+					{When: "contextKey.preco > 100", To: "ok"},
+				},
+				Fallback: "err",
+			},
+			{ID: "ok", Kind: policy.KindResponse, Status: 200},
+			{ID: "err", Kind: policy.KindResponse, Status: 500},
+		},
+	}
+	if _, err := compiler.Compile(p); err != nil {
+		t.Fatalf("expected no error when contextKey.preco is produced by mapPrices, got %v", err)
+	}
+}
+
 func containsSubstr(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsAt(s, sub))
 }
