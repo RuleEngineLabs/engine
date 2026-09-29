@@ -120,6 +120,20 @@ func (c *ArtifactCache) evictLRU() {
 	c.curBytes -= e.size
 }
 
+// Invalidate removes the entry for the given key from the cache.
+// Any goroutine already holding the artifact pointer for that key continues
+// to use it safely until Go's GC reclaims it (blue-green safety).
+func (c *ArtifactCache) Invalidate(key string) {
+	c.mu.Lock()
+	if el, ok := c.items[key]; ok {
+		e := el.Value.(*entry)
+		c.lru.Remove(el)
+		delete(c.items, key)
+		c.curBytes -= e.size
+	}
+	c.mu.Unlock()
+}
+
 // Len returns the number of cached entries.
 func (c *ArtifactCache) Len() int {
 	c.mu.Lock()
