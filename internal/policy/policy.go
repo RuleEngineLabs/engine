@@ -34,7 +34,8 @@ type State struct {
 // Policy is a named, versioned graph of states.
 type Policy struct {
 	ID      string  `json:"id"`
-	Version string  `json:"version"`
+	Name    string  `json:"name"`
+	Version int     `json:"version"`
 	States  []State `json:"states"`
 	Entry   string  `json:"entry"`
 }

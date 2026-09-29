@@ -78,3 +78,91 @@ func TestCompile_WithTransition(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 }
+
+func TestCompile_ReservedContextKey(t *testing.T) {
+	p := &policy.Policy{
+		ID:    "p3",
+		Entry: "s",
+		States: []policy.State{
+			{ID: "s", Kind: policy.KindExecution, ContextKey: "input", Fallback: "end"},
+			{ID: "end", Kind: policy.KindResponse, Status: 200},
+		},
+	}
+	_, err := compiler.Compile(p)
+	if err == nil {
+		t.Fatal("expected error for reserved contextKey")
+	}
+	if !containsSubstr(err.Error(), "input") {
+		t.Errorf("expected error to mention 'input', got: %v", err)
+	}
+}
+
+func TestCompile_CyclicGraph(t *testing.T) {
+	p := &policy.Policy{
+		ID:    "p4",
+		Entry: "a",
+		States: []policy.State{
+			{
+				ID:   "a",
+				Kind: policy.KindExecution,
+				Transitions: []policy.Transition{
+					{When: "true", To: "b"},
+				},
+			},
+			{
+				ID:   "b",
+				Kind: policy.KindExecution,
+				Transitions: []policy.Transition{
+					{When: "true", To: "a"},
+				},
+			},
+		},
+	}
+	_, err := compiler.Compile(p)
+	if err == nil {
+		t.Fatal("expected error for cyclic graph")
+	}
+	if !containsSubstr(err.Error(), "cycle") {
+		t.Errorf("expected error to mention 'cycle', got: %v", err)
+	}
+}
+
+func TestCompile_ThreeStateChain(t *testing.T) {
+	p := &policy.Policy{
+		ID:    "p5",
+		Entry: "s1",
+		States: []policy.State{
+			{
+				ID:   "s1",
+				Kind: policy.KindExecution,
+				Transitions: []policy.Transition{
+					{When: "true", To: "s2"},
+				},
+			},
+			{
+				ID:   "s2",
+				Kind: policy.KindExecution,
+				Transitions: []policy.Transition{
+					{When: "true", To: "s3"},
+				},
+			},
+			{ID: "s3", Kind: policy.KindResponse, Status: 200},
+		},
+	}
+	if _, err := compiler.Compile(p); err != nil {
+		t.Fatalf("expected no error for valid 3-state chain, got %v", err)
+	}
+}
+
+func containsSubstr(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsAt(s, sub))
+}
+
+func containsAt(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}

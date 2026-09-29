@@ -37,7 +37,7 @@ func TestStateDefaults(t *testing.T) {
 func TestPolicyEntry(t *testing.T) {
 	p := policy.Policy{
 		ID:      "p1",
-		Version: "1",
+		Version: 1,
 		Entry:   "start",
 		States: []policy.State{
 			{ID: "start", Kind: policy.KindExecution, Fallback: "err"},
