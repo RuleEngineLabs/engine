@@ -18,10 +18,18 @@ import (
 
 const maxSteps = 1000
 
+// TraceEntry records one visited state during execution.
+type TraceEntry struct {
+	StateID    string `json:"stateId"`
+	DurationMs int64  `json:"duration_ms"`
+	Blocked    bool   `json:"blocked,omitempty"`
+}
+
 // Result is the output of a successful policy execution.
 type Result struct {
-	State string `json:"state"`
-	Data  any    `json:"data"`
+	State string       `json:"state"`
+	Data  any          `json:"data"`
+	Trace []TraceEntry `json:"trace,omitempty"`
 }
 
 // ResultCache stores and retrieves cached apiCall results keyed by call signature.
@@ -124,6 +132,103 @@ func (e *Executor) Execute(ctx context.Context, art *compiler.Artifact, input an
 	}
 
 	return Result{}, fmt.Errorf("execution exceeded maximum steps (%d)", maxSteps)
+}
+
+// Preview runs the policy in preview mode: traces every visited state and blocks
+// write apiCall states (any method other than GET) without executing them.
+// The blocked state's contextKey is set to "preview_blocked_write" so downstream
+// expressions that reference it still receive a defined value.
+func Preview(ctx context.Context, art *compiler.Artifact, input any) (Result, error) {
+	return defaultExecutor.Preview(ctx, art, input)
+}
+
+// Preview is the Executor-level entry point for preview mode.
+func (e *Executor) Preview(ctx context.Context, art *compiler.Artifact, input any) (Result, error) {
+	stateIndex := make(map[string]*policy.State, len(art.Policy.States))
+	for i := range art.Policy.States {
+		stateIndex[art.Policy.States[i].ID] = &art.Policy.States[i]
+	}
+
+	env := map[string]any{
+		"input":      input,
+		"contextKey": map[string]any{},
+	}
+
+	var trace []TraceEntry
+	currentID := art.Policy.Entry
+	for step := 0; step < maxSteps; step++ {
+		s, ok := stateIndex[currentID]
+		if !ok {
+			return Result{}, fmt.Errorf("state %q not found during execution", currentID)
+		}
+
+		start := time.Now()
+
+		switch s.Kind {
+		case policy.KindResponse:
+			trace = append(trace, TraceEntry{StateID: s.ID, DurationMs: time.Since(start).Milliseconds()})
+			return Result{State: s.ID, Data: s.Data, Trace: trace}, nil
+
+		case policy.KindAPICall:
+			method := s.Method
+			if method == "" {
+				method = http.MethodGet
+			}
+			if isWriteMethod(method) {
+				// Block write without executing; mark as preview_blocked_write
+				if s.ContextKey != "" {
+					env["contextKey"].(map[string]any)[s.ContextKey] = "preview_blocked_write"
+				}
+				trace = append(trace, TraceEntry{StateID: s.ID, DurationMs: 0, Blocked: true})
+			} else {
+				if err := e.runAPICall(ctx, s, env); err != nil {
+					if s.Fallback != "" {
+						trace = append(trace, TraceEntry{StateID: s.ID, DurationMs: time.Since(start).Milliseconds()})
+						currentID = s.Fallback
+						continue
+					}
+					return Result{}, err
+				}
+				trace = append(trace, TraceEntry{StateID: s.ID, DurationMs: time.Since(start).Milliseconds()})
+			}
+
+		case policy.KindParallel:
+			if err := e.runParallel(ctx, s, env); err != nil {
+				if s.Fallback != "" {
+					trace = append(trace, TraceEntry{StateID: s.ID, DurationMs: time.Since(start).Milliseconds()})
+					currentID = s.Fallback
+					continue
+				}
+				return Result{}, err
+			}
+			trace = append(trace, TraceEntry{StateID: s.ID, DurationMs: time.Since(start).Milliseconds()})
+
+		default:
+			trace = append(trace, TraceEntry{StateID: s.ID, DurationMs: time.Since(start).Milliseconds()})
+		}
+
+		next, err := evalTransitions(art, s, env)
+		if err != nil {
+			return Result{}, err
+		}
+		if next == "" {
+			if s.Fallback == "" {
+				return Result{}, fmt.Errorf("state %q: no transition matched and no fallback defined", s.ID)
+			}
+			next = s.Fallback
+		}
+		currentID = next
+	}
+
+	return Result{}, fmt.Errorf("execution exceeded maximum steps (%d)", maxSteps)
+}
+
+func isWriteMethod(method string) bool {
+	switch strings.ToUpper(method) {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	}
+	return false
 }
 
 var urlTemplateRe = regexp.MustCompile(`\{([^}]+)\}`)
