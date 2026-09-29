@@ -14,7 +14,7 @@ func newExecuteServer() *http.ServeMux {
 	ps := store.New()
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /policies", handleCreate(ps))
-	mux.HandleFunc("POST /execute/{id}", handleExecute(ps))
+	mux.HandleFunc("POST /execute/{id}", handleExecute(ps, nil))
 	return mux
 }
 
