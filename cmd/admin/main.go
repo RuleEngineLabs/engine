@@ -35,6 +35,7 @@ func main() {
 	mux.HandleFunc("POST /preview", handlePreview())
 	mux.HandleFunc("POST /policies/{name}/canary", handleStartCanary(ps))
 	mux.HandleFunc("PATCH /policies/{name}/canary", handleExtendCanary(ps))
+	mux.HandleFunc("DELETE /policies/{name}/canary", handleCancelCanary(ps))
 
 	slog.Info("admin starting", "addr", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {

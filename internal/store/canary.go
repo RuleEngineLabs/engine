@@ -51,6 +51,13 @@ func (e ErrCanaryNotFound) Error() string {
 	return fmt.Sprintf("no active canary for policy %q", e.Name)
 }
 
+// ErrCanaryExtendReduce is returned when extend is called with a lower percent than current.
+type ErrCanaryExtendReduce struct{ Current, Requested int }
+
+func (e ErrCanaryExtendReduce) Error() string {
+	return "extend only increases traffic — use cancel to rollback"
+}
+
 // StartCanary initializes a new canary deployment for the named policy.
 // Returns ErrCanaryInvalidPercent for percent outside 1–99.
 // Returns ErrCanaryAlreadyActive if a canary is already active.
@@ -115,13 +122,6 @@ func (s *PolicyStore) GetActiveCanary(name string) (*CanaryRecord, bool) {
 	return rec, true
 }
 
-// ErrCanaryExtendReduce is returned when extend is called with a lower percent than current.
-type ErrCanaryExtendReduce struct{ Current, Requested int }
-
-func (e ErrCanaryExtendReduce) Error() string {
-	return "extend only increases traffic — use cancel to rollback"
-}
-
 // ExtendCanary increases the traffic percentage of an active canary.
 // Returns ErrCanaryNotFound if no active canary exists.
 // Returns ErrCanaryExtendReduce if percent is not greater than the current value.
@@ -147,3 +147,25 @@ func (s *PolicyStore) ExtendCanary(name string, percent int) (*CanaryRecord, err
 	return rec, nil
 }
 
+// CancelCanary cancels an active canary deployment, reverting 100% traffic to STABLE.
+// The sparse GSI attribute (GsiActiveStatus) is cleared so the item leaves the active index.
+// Returns ErrCanaryNotFound if no active canary exists.
+func (s *PolicyStore) CancelCanary(name, reason string) (*CanaryRecord, error) {
+	key := strings.ToLower(name)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rec, ok := s.canaries[key]
+	if !ok || rec.Status != CanaryStatusActive || !rec.ExpiresAt.After(time.Now()) {
+		if ok && rec.Status == CanaryStatusActive && !rec.ExpiresAt.After(time.Now()) {
+			rec.Status = CanaryStatusCompleted
+			rec.GsiActiveStatus = ""
+		}
+		return nil, ErrCanaryNotFound{Name: name}
+	}
+
+	rec.Status = CanaryStatusCancelled
+	rec.GsiActiveStatus = "" // removes sparse GSI attribute
+	rec.CancelReason = reason
+	return rec, nil
+}
