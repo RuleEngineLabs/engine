@@ -78,6 +78,9 @@ func validate(p *policy.Policy) error {
 				return fmt.Errorf("contextKey %q is reserved", s.ContextKey)
 			}
 		}
+		if s.Kind == policy.KindParallel && s.MaxConcurrency <= 0 {
+			return fmt.Errorf("state %q: parallel state requires maxConcurrency > 0", s.ID)
+		}
 		neighbors := make([]string, 0, len(s.Transitions)+1)
 		for _, t := range s.Transitions {
 			neighbors = append(neighbors, t.To)

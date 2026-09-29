@@ -99,6 +99,15 @@ func (e *Executor) Execute(ctx context.Context, art *compiler.Artifact, input an
 				}
 				return Result{}, err
 			}
+
+		case policy.KindParallel:
+			if err := e.runParallel(ctx, s, env); err != nil {
+				if s.Fallback != "" {
+					currentID = s.Fallback
+					continue
+				}
+				return Result{}, err
+			}
 		}
 
 		next, err := evalTransitions(art, s, env)
@@ -170,6 +179,68 @@ func (e *Executor) runAPICall(ctx context.Context, s *policy.State, env map[stri
 	}
 
 	return storeResult(s, lastBody, env)
+}
+
+// runParallel evaluates s.Over to get an item array, then processes each item
+// with up to s.MaxConcurrency concurrent goroutines. Results are collected in
+// env["contextKey"][s.ContextKey] as a slice (preserving insertion order).
+func (e *Executor) runParallel(ctx context.Context, s *policy.State, env map[string]any) error {
+	if s.Over == "" {
+		return nil
+	}
+
+	overProg, err := expr.Compile(s.Over)
+	if err != nil {
+		return fmt.Errorf("state %q: compile over expression: %w", s.ID, err)
+	}
+	raw, err := expr.Run(overProg, env)
+	if err != nil {
+		return fmt.Errorf("state %q: evaluate over expression: %w", s.ID, err)
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return fmt.Errorf("state %q: over expression must return an array", s.ID)
+	}
+	if len(items) == 0 {
+		if s.ContextKey != "" {
+			env["contextKey"].(map[string]any)[s.ContextKey] = []any{}
+		}
+		return nil
+	}
+
+	sem := make(chan struct{}, s.MaxConcurrency)
+	results := make([]any, len(items))
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+
+	for i, item := range items {
+		wg.Add(1)
+		go func(idx int, it any) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			mu.Lock()
+			hasErr := firstErr != nil
+			mu.Unlock()
+			if hasErr {
+				return
+			}
+
+			results[idx] = it
+		}(i, item)
+	}
+	wg.Wait()
+
+	if firstErr != nil {
+		return firstErr
+	}
+
+	if s.ContextKey != "" {
+		env["contextKey"].(map[string]any)[s.ContextKey] = results
+	}
+	return nil
 }
 
 func storeResult(s *policy.State, body []byte, env map[string]any) error {
