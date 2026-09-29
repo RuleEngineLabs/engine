@@ -50,10 +50,11 @@ func buildServer(addr string) (string, http.Handler) {
 	ps := store.New()
 	rl := ratelimit.New(time.Second, 10)
 	mux := newAdminMux(ps, rl)
-	return addr, logRequests(mux)
+	return addr, withCorrelationID(logRequests(mux))
 }
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	addr, handler := buildServer(os.Getenv("ADDR"))
 	slog.Info("admin starting", "addr", addr)
 	if err := http.ListenAndServe(addr, handler); err != nil {
