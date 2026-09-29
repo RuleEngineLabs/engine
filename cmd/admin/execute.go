@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -72,11 +73,15 @@ func handleExecute(ps *store.PolicyStore, rl *ratelimit.Limiter) http.HandlerFun
 			}
 		}
 
+		start := time.Now()
 		result, err := executor.Execute(r.Context(), rec.Artifact, input)
+		durationMs := time.Since(start).Milliseconds()
 		if err != nil {
+			slog.Error("execute failed", "policy", rec.Name, "err", err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		slog.Info("execute ok", "policy", rec.Name, "state", result.State, "duration_ms", durationMs)
 
 		// Fire shadow execution asynchronously — consumer always gets STABLE response.
 		if shadow, ok := ps.GetActiveShadow(rec.Name); ok {
@@ -116,6 +121,12 @@ func runShadow(ps *store.PolicyStore, policyName, stableVersion string, shadow *
 	if err != nil {
 		d.CandidateError = err.Error()
 		ps.LogDivergence(d)
+		slog.Warn("shadow divergence (candidate error)",
+			"policy", policyName,
+			"stable_version", stableVersion,
+			"candidate_version", shadow.CandidateVersion,
+			"err", err,
+		)
 		return
 	}
 
@@ -124,6 +135,11 @@ func runShadow(ps *store.PolicyStore, policyName, stableVersion string, shadow *
 	if !bytes.Equal(stableJSON, candJSON) {
 		d.CandidateOutput = candResult.Data
 		ps.LogDivergence(d)
+		slog.Warn("shadow divergence (output mismatch)",
+			"policy", policyName,
+			"stable_version", stableVersion,
+			"candidate_version", shadow.CandidateVersion,
+		)
 	}
 	// Identical outputs: no divergence record.
 }

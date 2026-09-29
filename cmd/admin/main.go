@@ -50,9 +50,7 @@ func buildServer(addr string) (string, http.Handler) {
 	ps := store.New()
 	rl := ratelimit.New(time.Second, 10)
 	mux := newAdminMux(ps, rl)
-	// In production the S3Publisher is nil (bucket not yet provisioned via EPIC-011);
-	// the route is registered without effect until the publisher is wired.
-	return addr, mux
+	return addr, logRequests(mux)
 }
 
 func main() {
