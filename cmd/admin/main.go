@@ -23,6 +23,7 @@ func main() {
 	mux.HandleFunc("PUT /policies/{id}", handleUpdate(ps))
 	mux.HandleFunc("DELETE /policies/{id}", handleDelete(ps))
 	mux.HandleFunc("POST /execute/{id}", handleExecute(ps))
+	mux.HandleFunc("POST /policies/{name}/versions", handlePromote(ps))
 
 	slog.Info("admin starting", "addr", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
