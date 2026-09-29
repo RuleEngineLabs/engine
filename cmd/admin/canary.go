@@ -15,6 +15,10 @@ type startCanaryRequest struct {
 	TTLSeconds       int    `json:"ttl"`
 }
 
+type extendCanaryRequest struct {
+	Percent int `json:"percent"`
+}
+
 func handleStartCanary(ps *store.PolicyStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
@@ -68,6 +72,59 @@ func handleStartCanary(ps *store.PolicyStore) http.HandlerFunc {
 			"status":           canary.Status,
 			"gsiActiveStatus":  canary.GsiActiveStatus,
 			"expiresAt":        canary.ExpiresAt,
+		})
+	}
+}
+
+func handleExtendCanary(ps *store.PolicyStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+
+		claims := auth.FromContext(r.Context())
+		var groups []string
+		if claims != nil {
+			groups = claims.Groups
+		}
+
+		rec, ok := ps.GetByName(name)
+		if !ok {
+			writeError(w, http.StatusNotFound, "policy not found")
+			return
+		}
+
+		if !versionDeleteAuthorized(groups, rec.Owner) {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+
+		var req extendCanaryRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+
+		canary, err := ps.ExtendCanary(name, req.Percent)
+		if err != nil {
+			var errReduce store.ErrCanaryExtendReduce
+			if errors.As(err, &errReduce) {
+				writeError(w, http.StatusUnprocessableEntity, errReduce.Error())
+				return
+			}
+			var errNotFound store.ErrCanaryNotFound
+			if errors.As(err, &errNotFound) {
+				writeError(w, http.StatusNotFound, errNotFound.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"policyName":       canary.PolicyName,
+			"candidateVersion": canary.CandidateVersion,
+			"percent":          canary.Percent,
+			"status":           canary.Status,
 		})
 	}
 }
