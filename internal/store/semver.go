@@ -58,6 +58,15 @@ func (s *PolicyStore) UpsertDraft(name, baseVersion string, p *policy.Policy, ar
 	s.mu.Unlock()
 }
 
+// GetDraft returns the current draft for the named policy, or false if none exists.
+func (s *PolicyStore) GetDraft(name string) (*DraftRecord, bool) {
+	key := strings.ToLower(name)
+	s.mu.RLock()
+	dr, ok := s.drafts[key]
+	s.mu.RUnlock()
+	return dr, ok
+}
+
 // ApproveDraft marks the draft for the named policy as APPROVED.
 func (s *PolicyStore) ApproveDraft(name string) error {
 	key := strings.ToLower(name)
