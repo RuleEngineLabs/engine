@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/RuleEngineLabs/engine/internal/compiler"
 	"github.com/RuleEngineLabs/engine/internal/policy"
@@ -38,19 +39,28 @@ type PolicyRecord struct {
 	Artifact *compiler.Artifact
 }
 
+// versionPtr holds the current version atomically for a single policyId.
+// Readers get a stable *PolicyRecord pointer regardless of concurrent writes.
+type versionPtr struct {
+	_ [64]byte // cache-line padding to avoid false sharing
+	v atomic.Pointer[PolicyRecord]
+}
+
 // PolicyStore is an in-memory repository for published policies.
 // It is safe for concurrent use.
 type PolicyStore struct {
-	mu      sync.RWMutex
-	records map[string]*PolicyRecord // key: policyId
-	byName  map[string]*PolicyRecord // key: normalized name
+	mu       sync.RWMutex
+	records  map[string]*PolicyRecord // key: policyId (all versions, latest wins)
+	byName   map[string]*PolicyRecord // key: normalized name (lowercase)
+	versions map[string]*versionPtr   // key: policyId → current version pointer
 }
 
 // New returns an initialized PolicyStore.
 func New() *PolicyStore {
 	return &PolicyStore{
-		records: make(map[string]*PolicyRecord),
-		byName:  make(map[string]*PolicyRecord),
+		records:  make(map[string]*PolicyRecord),
+		byName:   make(map[string]*PolicyRecord),
+		versions: make(map[string]*versionPtr),
 	}
 }
 
@@ -76,6 +86,9 @@ func (s *PolicyStore) Create(name, owner string, art *compiler.Artifact) (policy
 	}
 
 	normalized := strings.ToLower(name)
+	vp := &versionPtr{}
+	vp.v.Store(rec)
+
 	s.mu.Lock()
 	if _, exists := s.byName[normalized]; exists {
 		s.mu.Unlock()
@@ -83,8 +96,48 @@ func (s *PolicyStore) Create(name, owner string, art *compiler.Artifact) (policy
 	}
 	s.records[id] = rec
 	s.byName[normalized] = rec
+	s.versions[id] = vp
 	s.mu.Unlock()
 	return id, 1, nil
+}
+
+// Publish atomically publishes a new version of an existing policy.
+// Returns the new version number. The caller must also invalidate the
+// old artifact from the ArtifactCache (blue-green handoff).
+func (s *PolicyStore) Publish(policyID string, art *compiler.Artifact) (version int, err error) {
+	s.mu.Lock()
+	prev, ok := s.records[policyID]
+	if !ok {
+		s.mu.Unlock()
+		return 0, fmt.Errorf("policy %q not found", policyID)
+	}
+	newVer := prev.Version + 1
+	rec := &PolicyRecord{
+		PolicyID: policyID,
+		Version:  newVer,
+		Name:     prev.Name,
+		Owner:    prev.Owner,
+		Policy:   art.Policy,
+		Artifact: art,
+	}
+	s.records[policyID] = rec
+	vp := s.versions[policyID]
+	s.mu.Unlock()
+
+	// Atomic swap: in-flight requests that loaded the old pointer complete safely.
+	vp.v.Store(rec)
+	return newVer, nil
+}
+
+// Current returns the current (latest) record for policyId via the atomic pointer.
+func (s *PolicyStore) Current(policyID string) (*PolicyRecord, error) {
+	s.mu.RLock()
+	vp, ok := s.versions[policyID]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("policy %q not found", policyID)
+	}
+	return vp.v.Load(), nil
 }
 
 // Get retrieves a policy record by policyId.

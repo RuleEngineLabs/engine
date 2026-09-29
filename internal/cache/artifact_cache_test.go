@@ -115,5 +115,53 @@ func TestArtifactCache_Singleflight(t *testing.T) {
 			t.Errorf("goroutine %d got different artifact than goroutine 0", i)
 		}
 	}
+}
 
+func TestArtifactCache_BlueGreen_Invalidation(t *testing.T) {
+	c := cache.New(cache.DefaultMaxBytes)
+	art1 := makeArtifact(t, "bg1")
+	art2 := makeArtifact(t, "bg2")
+
+	var compileCount atomic.Int32
+
+	// Populate v1
+	v1, _ := c.GetOrCompile("pol:1", func() (*compiler.Artifact, error) {
+		compileCount.Add(1)
+		return art1, nil
+	})
+	if v1 != art1 {
+		t.Fatal("expected art1 from cache")
+	}
+
+	// Invalidate v1 (blue-green: new version published)
+	c.Invalidate("pol:1")
+
+	// Populate v2
+	v2, _ := c.GetOrCompile("pol:2", func() (*compiler.Artifact, error) {
+		compileCount.Add(1)
+		return art2, nil
+	})
+	if v2 != art2 {
+		t.Fatal("expected art2 for v2")
+	}
+
+	// v1 is gone from cache; new request for v1 recompiles
+	var recompiled atomic.Int32
+	c.GetOrCompile("pol:1", func() (*compiler.Artifact, error) {
+		recompiled.Add(1)
+		return art1, nil
+	})
+	if recompiled.Load() != 1 {
+		t.Errorf("expected recompile after invalidation, got %d compiles", recompiled.Load())
+	}
+
+	// v2 is still in cache (0 additional compiles)
+	prevCount := compileCount.Load()
+	c.GetOrCompile("pol:2", func() (*compiler.Artifact, error) {
+		compileCount.Add(1)
+		return art2, nil
+	})
+	if compileCount.Load() != prevCount {
+		t.Errorf("v2 should still be in cache; unexpected recompile")
+	}
 }
