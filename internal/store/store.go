@@ -167,6 +167,28 @@ func (s *PolicyStore) List() []*PolicyRecord {
 	return out
 }
 
+// GetByName retrieves the latest policy record by name (case-insensitive).
+func (s *PolicyStore) GetByName(name string) (*PolicyRecord, bool) {
+	s.mu.RLock()
+	rec, ok := s.byName[strings.ToLower(name)]
+	s.mu.RUnlock()
+	return rec, ok
+}
+
+// Bootstrap bulk-loads records from a trusted source (snapshot) into the store,
+// bypassing reserved-name and uniqueness checks. Existing records are overwritten.
+func (s *PolicyStore) Bootstrap(records []*PolicyRecord) {
+	s.mu.Lock()
+	for _, rec := range records {
+		vp := &versionPtr{}
+		vp.v.Store(rec)
+		s.records[rec.PolicyID] = rec
+		s.byName[strings.ToLower(rec.Name)] = rec
+		s.versions[rec.PolicyID] = vp
+	}
+	s.mu.Unlock()
+}
+
 func generateID() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
