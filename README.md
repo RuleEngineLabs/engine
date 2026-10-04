@@ -108,7 +108,7 @@ docker run -p 9090:8081 engine:local
 ### Variáveis de ambiente
 
 | Variável | Padrão | Descrição |
-|---|---|---|
+| --- | --- | --- |
 | `ADDR` | `:8081` | Endereço de escuta do servidor |
 | `ENVIRONMENT` | — | `staging` habilita `origin=benchmark` no noCache |
 
@@ -181,7 +181,7 @@ O token de instalação é gerado via RS256 JWT, renovado automaticamente no in�
 ## CI/CD
 
 | Branch | Trigger | Ação |
-|---|---|---|
+| --- | --- | --- |
 | `feature/*` | push | go vet + test + coverage → abre PR para `develop` |
 | `develop` | push/merge | go vet + test → cria `release/vX.Y.Z` + PR para `main` |
 | `release/*` | push | go vet + test + Docker build → valida artefato |

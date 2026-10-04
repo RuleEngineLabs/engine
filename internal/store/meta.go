@@ -5,12 +5,27 @@ import (
 	"strings"
 )
 
+// HTTPConfig holds per-policy HTTP behaviour overrides applied by handleExecute.
+// All fields are opt-in; zero value means "use default / disabled".
+type HTTPConfig struct {
+	// RetryOn lists HTTP status codes for which a Retry-After header is added.
+	RetryOn []int `json:"retry_on,omitempty"`
+	// RetryAfterSeconds is the value written to Retry-After when the status matches RetryOn.
+	RetryAfterSeconds int `json:"retry_after_seconds,omitempty"`
+	// TimeoutMs cuts the execution context after this many milliseconds (0 = no limit).
+	TimeoutMs int `json:"timeout_ms,omitempty"`
+	// CacheMaxAgeSeconds sets Cache-Control: max-age=N on successful GET responses (0 = off).
+	CacheMaxAgeSeconds int `json:"cache_max_age_seconds,omitempty"`
+}
+
 // PolicyMeta holds policy-level configuration that is not part of the state machine.
 type PolicyMeta struct {
 	CoexistenceWindowSeconds int
 	// Approvers lists the Cognito group identifiers allowed to approve drafts.
 	// If empty, the policy owner (PolicyRecord.Owner) is the sole approver.
 	Approvers []string
+	// HTTP configures per-policy HTTP behaviour (retry, timeout, cache).
+	HTTP HTTPConfig
 }
 
 // ErrApprovalForbidden is returned when the caller is not in the approvers list.

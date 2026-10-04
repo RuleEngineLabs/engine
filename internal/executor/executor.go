@@ -29,9 +29,10 @@ type TraceEntry struct {
 
 // Result is the output of a successful policy execution.
 type Result struct {
-	State string       `json:"state"`
-	Data  any          `json:"data"`
-	Trace []TraceEntry `json:"trace,omitempty"`
+	State  string       `json:"state"`
+	Data   any          `json:"data"`
+	Trace  []TraceEntry `json:"trace,omitempty"`
+	Status int          `json:"-"` // HTTP status from the response state; 0 means use 200
 }
 
 // ResultCache stores and retrieves cached apiCall results keyed by call signature.
@@ -103,7 +104,7 @@ func (e *Executor) Execute(ctx context.Context, art *compiler.Artifact, input an
 
 		switch s.Kind {
 		case policy.KindResponse:
-			return Result{State: s.ID, Data: s.Data}, nil
+			return Result{State: s.ID, Status: s.Status, Data: s.Data}, nil
 
 		case policy.KindAPICall:
 			if err := e.runAPICall(ctx, s, env); err != nil {
@@ -168,7 +169,7 @@ func (e *Executor) Preview(ctx context.Context, art *compiler.Artifact, input an
 		switch s.Kind {
 		case policy.KindResponse:
 			trace = append(trace, TraceEntry{StateID: s.ID, DurationMs: time.Since(start).Milliseconds()})
-			return Result{State: s.ID, Data: s.Data, Trace: trace}, nil
+			return Result{State: s.ID, Status: s.Status, Data: s.Data, Trace: trace}, nil
 
 		case policy.KindAPICall:
 			method := s.Method

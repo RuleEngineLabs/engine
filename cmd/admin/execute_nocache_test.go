@@ -81,23 +81,39 @@ func TestHandleExecute_NoCacheRateLimit(t *testing.T) {
 	rl := ratelimit.New(time.Second, 3) // low threshold for test
 	srv, id := newNoCacheServer(rl, v)
 
-	makeReq := func() int {
+	makeReqFull := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, "/execute/"+id+"?noCache=true", bytes.NewBufferString("{}"))
 		r.Header.Set("Authorization", noCacheBearerHeader([]string{"team-rl"}))
 		srv.ServeHTTP(w, r)
-		return w.Code
+		return w
 	}
 
-	// First 3 should succeed
+	// First 3 should succeed — Retry-After must be absent.
 	for i := 0; i < 3; i++ {
-		if code := makeReq(); code != http.StatusOK {
-			t.Fatalf("call %d: expected 200, got %d", i+1, code)
+		w := makeReqFull()
+		if w.Code != http.StatusOK {
+			t.Fatalf("call %d: expected 200, got %d", i+1, w.Code)
+		}
+		// Fix 3: Retry-After must NOT appear on successful requests.
+		if ra := w.Header().Get("Retry-After"); ra != "" {
+			t.Errorf("call %d: Retry-After must be absent on 200, got %q", i+1, ra)
 		}
 	}
-	// 4th should be rate limited
-	if code := makeReq(); code != http.StatusTooManyRequests {
-		t.Fatalf("expected 429 on 4th call, got %d", code)
+	// 4th should be rate limited — Retry-After must be "1".
+	w := makeReqFull()
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 on 4th call, got %d", w.Code)
+	}
+	// Fix 3: Retry-After must be "1" on 429.
+	if ra := w.Header().Get("Retry-After"); ra != "1" {
+		t.Errorf("expected Retry-After=1 on 429, got %q", ra)
+	}
+	// Fix 5: duration_ms must be absent on 429.
+	var body map[string]any
+	json.NewDecoder(w.Body).Decode(&body)
+	if _, hasDms := body["duration_ms"]; hasDms {
+		t.Error("duration_ms must not appear in error response (429)")
 	}
 }
 
