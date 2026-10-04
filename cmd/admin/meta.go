@@ -39,7 +39,7 @@ func handleSetMeta(ps *store.PolicyStore) http.HandlerFunc {
 			},
 		})
 		if err != nil {
-			writeError(w, http.StatusNotFound, err.Error())
+			writeError(w, http.StatusNotFound, "policy not found")
 			return
 		}
 

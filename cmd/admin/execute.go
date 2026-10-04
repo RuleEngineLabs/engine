@@ -111,8 +111,9 @@ func handleExecute(ps *store.PolicyStore, rl *ratelimit.Limiter) http.HandlerFun
 		}
 
 		// Resolve HTTP status: policy state wins; fall back to 200.
+		// Clamp to valid range to avoid malformed responses from misconfigured policies.
 		httpStatus := http.StatusOK
-		if result.Status != 0 {
+		if result.Status >= 100 && result.Status <= 599 {
 			httpStatus = result.Status
 		}
 
@@ -194,6 +195,9 @@ func runShadow(ps *store.PolicyStore, policyName, stableVersion string, shadow *
 	// Identical outputs: no divergence record.
 }
 
+// noCacheCallerKey returns a rate-limit bucket key for noCache requests.
+// Granularity is per Cognito group (first group claim), not per individual user.
+// Unauthenticated callers fall back to RemoteAddr.
 func noCacheCallerKey(r *http.Request, claims *auth.Claims) string {
 	if claims != nil && len(claims.Groups) > 0 {
 		return claims.Groups[0]

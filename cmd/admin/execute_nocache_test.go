@@ -118,6 +118,11 @@ func TestHandleExecute_NoCacheRateLimit(t *testing.T) {
 }
 
 func TestHandleExecute_NoCacheBenchmark_ForbiddenWithoutApprover(t *testing.T) {
+	// staging=true so the staging gate passes; we want to test the role gate.
+	orig := isStaging
+	isStaging = func() bool { return true }
+	t.Cleanup(func() { isStaging = orig })
+
 	v := &auth.HMACVerifier{Secret: noCacheAuthSecret}
 	srv, id := newNoCacheServer(nil, v)
 
@@ -134,8 +139,9 @@ func TestHandleExecute_NoCacheBenchmark_ForbiddenWithoutApprover(t *testing.T) {
 
 func TestHandleExecute_NoCacheBenchmark_GlobalOperatorAllowed(t *testing.T) {
 	// benchmark origin requires staging environment (US-029)
+	orig := isStaging
 	isStaging = func() bool { return true }
-	t.Cleanup(func() { isStaging = func() bool { return false } })
+	t.Cleanup(func() { isStaging = orig })
 
 	v := &auth.HMACVerifier{Secret: noCacheAuthSecret}
 	srv, id := newNoCacheServer(nil, v)
