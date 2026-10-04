@@ -7,6 +7,11 @@
 *.out
 coverage.html
 
+# Binários compilados localmente
+*.exe
+cmd/admin/admin
+cmd/admin/admin-stress-tmp
+
 # Vendoring (sem efeito se não usar)
 /vendor/
 
