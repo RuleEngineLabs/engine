@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/RuleEngineLabs/engine/internal/compiler"
 	"github.com/RuleEngineLabs/engine/internal/executor"
@@ -331,4 +332,151 @@ func TestExecute_Parallel_MaxConcurrencyRespected(t *testing.T) {
 	if res.State != "ok" {
 		t.Errorf("expected ok, got %q", res.State)
 	}
+}
+
+func TestExecute_ISODateCoercion_RFC3339(t *testing.T) {
+	// ISO 8601 datetime string must be coerced to time.Time so comparisons work.
+	p := &policy.Policy{
+		ID:    "p-iso-rfc3339",
+		Entry: "check",
+		States: []policy.State{
+			{
+				ID:   "check",
+				Kind: policy.KindExecution,
+				Transitions: []policy.Transition{
+					{When: `input.ts > date("2026-01-01T00:00:00Z")`, To: "after"},
+					{When: "true", To: "before"},
+				},
+			},
+			{ID: "after", Kind: policy.KindResponse, Status: 200, Data: "after"},
+			{ID: "before", Kind: policy.KindResponse, Status: 200, Data: "before"},
+		},
+	}
+	art := mustCompile(t, p)
+
+	res, err := executor.Execute(context.Background(), art, map[string]any{
+		"ts": "2026-06-15T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.State != "after" {
+		t.Errorf("expected after, got %q", res.State)
+	}
+
+	res, err = executor.Execute(context.Background(), art, map[string]any{
+		"ts": "2025-12-31T23:59:59Z",
+	})
+	if err != nil {
+		t.Fatalf("execute before: %v", err)
+	}
+	if res.State != "before" {
+		t.Errorf("expected before, got %q", res.State)
+	}
+}
+
+func TestExecute_ISODateCoercion_DateOnly(t *testing.T) {
+	// Bare ISO date (YYYY-MM-DD) must also be coerced.
+	p := &policy.Policy{
+		ID:    "p-iso-date-only",
+		Entry: "check",
+		States: []policy.State{
+			{
+				ID:   "check",
+				Kind: policy.KindExecution,
+				Transitions: []policy.Transition{
+					{When: `input.d == date("2026-07-14")`, To: "match"},
+					{When: "true", To: "nomatch"},
+				},
+			},
+			{ID: "match", Kind: policy.KindResponse, Status: 200, Data: "match"},
+			{ID: "nomatch", Kind: policy.KindResponse, Status: 200, Data: "nomatch"},
+		},
+	}
+	art := mustCompile(t, p)
+
+	res, err := executor.Execute(context.Background(), art, map[string]any{
+		"d": "2026-07-14",
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.State != "match" {
+		t.Errorf("expected match, got %q", res.State)
+	}
+}
+
+func TestExecute_ISODateCoercion_NonISOPassthrough(t *testing.T) {
+	// Non-ISO strings must not be coerced — they pass through as strings.
+	p := &policy.Policy{
+		ID:    "p-non-iso",
+		Entry: "check",
+		States: []policy.State{
+			{
+				ID:   "check",
+				Kind: policy.KindExecution,
+				Transitions: []policy.Transition{
+					{When: `input.label == "hello"`, To: "ok"},
+					{When: "true", To: "fail"},
+				},
+			},
+			{ID: "ok", Kind: policy.KindResponse, Status: 200, Data: "ok"},
+			{ID: "fail", Kind: policy.KindResponse, Status: 200, Data: "fail"},
+		},
+	}
+	art := mustCompile(t, p)
+
+	res, err := executor.Execute(context.Background(), art, map[string]any{
+		"label": "hello",
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.State != "ok" {
+		t.Errorf("expected ok, got %q", res.State)
+	}
+}
+
+func TestExecute_ISODateCoercion_NestedInput(t *testing.T) {
+	// Coercion walks nested maps and slices recursively.
+	p := &policy.Policy{
+		ID:    "p-nested",
+		Entry: "check",
+		States: []policy.State{
+			{
+				ID:   "check",
+				Kind: policy.KindExecution,
+				Transitions: []policy.Transition{
+					{When: `input.event.at > date("2026-01-01T00:00:00Z")`, To: "ok"},
+					{When: "true", To: "fail"},
+				},
+			},
+			{ID: "ok", Kind: policy.KindResponse, Status: 200, Data: "ok"},
+			{ID: "fail", Kind: policy.KindResponse, Status: 200, Data: "fail"},
+		},
+	}
+	art := mustCompile(t, p)
+
+	res, err := executor.Execute(context.Background(), art, map[string]any{
+		"event": map[string]any{
+			"at": "2026-09-01T00:00:00Z",
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.State != "ok" {
+		t.Errorf("expected ok, got %q", res.State)
+	}
+}
+
+// date is a test helper that parses an ISO 8601 string into time.Time.
+// Mirrors the coercion the executor applies to input strings.
+func date(s string) time.Time {
+	for _, layout := range []string{time.RFC3339, time.DateOnly} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	panic("date: invalid ISO string: " + s)
 }

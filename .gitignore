@@ -26,3 +26,6 @@ go.work.sum
 # SO
 .DS_Store
 Thumbs.db
+
+# Performance test reports (local run artefacts)
+perf/results/

@@ -53,26 +53,26 @@ type PolicyStore struct {
 	mu       sync.RWMutex
 	records  map[string]*PolicyRecord    // key: policyId (all versions, latest wins)
 	byName   map[string]*PolicyRecord    // key: normalized name (lowercase)
-	versions map[string]*versionPtr      // key: policyId → current version pointer
+	versions sync.Map                    // key: policyId → *versionPtr (lock-free reads)
 	drafts   map[string]*DraftRecord     // key: normalized name → pending draft
 	meta     map[string]*PolicyMeta      // key: normalized name → policy meta config
 	history  map[string][]*VersionRecord // key: normalized name → ordered version history
-	auditLog      []*RemovalAuditEntry
-	canaries      map[string]*CanaryRecord      // key: normalized name → active canary
-	shadows       map[string]*ShadowRecord      // key: normalized name → shadow deployment
+	auditLog []*RemovalAuditEntry
+	canaries map[string]*CanaryRecord // key: normalized name → active canary
+
+	shadowMu      sync.RWMutex
+	shadows       map[string]*ShadowRecord       // key: normalized name → shadow deployment
 	divergenceLog map[string][]*ShadowDivergence // key: normalized name → divergence entries
 }
 
 // New returns an initialized PolicyStore.
 func New() *PolicyStore {
 	return &PolicyStore{
-		records:  make(map[string]*PolicyRecord),
-		byName:   make(map[string]*PolicyRecord),
-		versions: make(map[string]*versionPtr),
-		drafts:   make(map[string]*DraftRecord),
-		meta:     make(map[string]*PolicyMeta),
-		history:  make(map[string][]*VersionRecord),
-		auditLog: nil,
+		records:       make(map[string]*PolicyRecord),
+		byName:        make(map[string]*PolicyRecord),
+		drafts:        make(map[string]*DraftRecord),
+		meta:          make(map[string]*PolicyMeta),
+		history:       make(map[string][]*VersionRecord),
 		canaries:      make(map[string]*CanaryRecord),
 		shadows:       make(map[string]*ShadowRecord),
 		divergenceLog: make(map[string][]*ShadowDivergence),
@@ -111,8 +111,8 @@ func (s *PolicyStore) Create(name, owner string, art *compiler.Artifact) (policy
 	}
 	s.records[id] = rec
 	s.byName[normalized] = rec
-	s.versions[id] = vp
 	s.mu.Unlock()
+	s.versions.Store(id, vp)
 	return id, 1, nil
 }
 
@@ -136,23 +136,22 @@ func (s *PolicyStore) Publish(policyID string, art *compiler.Artifact) (version 
 		Artifact: art,
 	}
 	s.records[policyID] = rec
-	vp := s.versions[policyID]
 	s.mu.Unlock()
 
 	// Atomic swap: in-flight requests that loaded the old pointer complete safely.
-	vp.v.Store(rec)
+	raw, _ := s.versions.Load(policyID)
+	raw.(*versionPtr).v.Store(rec)
 	return newVer, nil
 }
 
 // Current returns the current (latest) record for policyId via the atomic pointer.
+// This path is lock-free: the versions sync.Map is read-optimised for stable keys.
 func (s *PolicyStore) Current(policyID string) (*PolicyRecord, error) {
-	s.mu.RLock()
-	vp, ok := s.versions[policyID]
-	s.mu.RUnlock()
+	raw, ok := s.versions.Load(policyID)
 	if !ok {
 		return nil, fmt.Errorf("policy %q not found", policyID)
 	}
-	return vp.v.Load(), nil
+	return raw.(*versionPtr).v.Load(), nil
 }
 
 // Get retrieves a policy record by policyId.
@@ -190,13 +189,15 @@ func (s *PolicyStore) GetByName(name string) (*PolicyRecord, bool) {
 func (s *PolicyStore) Bootstrap(records []*PolicyRecord) {
 	s.mu.Lock()
 	for _, rec := range records {
-		vp := &versionPtr{}
-		vp.v.Store(rec)
 		s.records[rec.PolicyID] = rec
 		s.byName[strings.ToLower(rec.Name)] = rec
-		s.versions[rec.PolicyID] = vp
 	}
 	s.mu.Unlock()
+	for _, rec := range records {
+		vp := &versionPtr{}
+		vp.v.Store(rec)
+		s.versions.Store(rec.PolicyID, vp)
+	}
 }
 
 func generateID() (string, error) {
