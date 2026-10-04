@@ -57,8 +57,8 @@ func (e ErrShadowNotFound) Error() string {
 // Returns ErrShadowAlreadyActive if a shadow is already running.
 func (s *PolicyStore) StartShadow(name, candidateVersion string, art *compiler.Artifact) (*ShadowRecord, error) {
 	key := strings.ToLower(name)
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.shadowMu.Lock()
+	defer s.shadowMu.Unlock()
 
 	if existing, ok := s.shadows[key]; ok && existing.Status == ShadowStatusActive {
 		return nil, ErrShadowAlreadyActive{Name: name}
@@ -79,8 +79,8 @@ func (s *PolicyStore) StartShadow(name, candidateVersion string, art *compiler.A
 // Returns ErrShadowNotFound if no active shadow exists.
 func (s *PolicyStore) StopShadow(name string) (*ShadowRecord, error) {
 	key := strings.ToLower(name)
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.shadowMu.Lock()
+	defer s.shadowMu.Unlock()
 
 	rec, ok := s.shadows[key]
 	if !ok || rec.Status != ShadowStatusActive {
@@ -93,8 +93,8 @@ func (s *PolicyStore) StopShadow(name string) (*ShadowRecord, error) {
 // GetActiveShadow returns the active shadow for the named policy, or false if none.
 func (s *PolicyStore) GetActiveShadow(name string) (*ShadowRecord, bool) {
 	key := strings.ToLower(name)
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.shadowMu.RLock()
+	defer s.shadowMu.RUnlock()
 
 	rec, ok := s.shadows[key]
 	if !ok || rec.Status != ShadowStatusActive {
@@ -106,18 +106,18 @@ func (s *PolicyStore) GetActiveShadow(name string) (*ShadowRecord, bool) {
 // LogDivergence appends a divergence record to the shadow log for the named policy.
 func (s *PolicyStore) LogDivergence(d *ShadowDivergence) {
 	key := strings.ToLower(d.PolicyName)
-	s.mu.Lock()
+	s.shadowMu.Lock()
 	s.divergenceLog[key] = append(s.divergenceLog[key], d)
-	s.mu.Unlock()
+	s.shadowMu.Unlock()
 }
 
 // GetDivergences returns all logged divergences for the named policy.
 func (s *PolicyStore) GetDivergences(name string) []*ShadowDivergence {
 	key := strings.ToLower(name)
-	s.mu.RLock()
+	s.shadowMu.RLock()
 	log := s.divergenceLog[key]
 	out := make([]*ShadowDivergence, len(log))
 	copy(out, log)
-	s.mu.RUnlock()
+	s.shadowMu.RUnlock()
 	return out
 }

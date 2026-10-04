@@ -20,12 +20,44 @@ var contextKeyRef = regexp.MustCompile(`\bcontextKey\.(\w+)\b`)
 // Artifact is a compiled policy ready for execution.
 type Artifact struct {
 	Policy *policy.Policy
-	// programs holds pre-compiled expr programs keyed by state ID + transition index.
+
+	// stateIndex is pre-built for O(1) state lookup by ID, eliminating
+	// the per-call rebuild in Execute/Preview.
+	stateIndex map[string]*policy.State
+
+	// transitionPrograms holds compiled expressions per state, ordered by
+	// transition index. Eliminates fmt.Sprintf("%s:%d") in the hot loop.
+	transitionPrograms map[string][]*vm.Program
+
+	// overPrograms holds pre-compiled "over" expressions for parallel states,
+	// eliminating expr.Compile calls during execution.
+	overPrograms map[string]*vm.Program
+
+	// programs is kept for backward-compatible Program(key) access.
 	programs map[string]*vm.Program
 }
 
+// State returns the compiled state by ID, or (nil, false) if not found.
+func (a *Artifact) State(id string) (*policy.State, bool) {
+	s, ok := a.stateIndex[id]
+	return s, ok
+}
+
+// TransitionPrograms returns the pre-compiled expression programs for a state's
+// transitions, in order. The returned slice must not be modified.
+func (a *Artifact) TransitionPrograms(stateID string) ([]*vm.Program, bool) {
+	p, ok := a.transitionPrograms[stateID]
+	return p, ok
+}
+
+// OverProgram returns the pre-compiled "over" expression for a parallel state.
+func (a *Artifact) OverProgram(stateID string) (*vm.Program, bool) {
+	p, ok := a.overPrograms[stateID]
+	return p, ok
+}
+
 // Program returns the compiled expression program for a state transition.
-// Key format: "stateID:transitionIndex".
+// Key format: "stateID:transitionIndex". Kept for compatibility.
 func (a *Artifact) Program(key string) (*vm.Program, bool) {
 	p, ok := a.programs[key]
 	return p, ok
@@ -39,19 +71,44 @@ func Compile(p *policy.Policy) (*Artifact, error) {
 		return nil, fmt.Errorf("compile: %w", err)
 	}
 
+	stateIndex := make(map[string]*policy.State, len(p.States))
 	programs := make(map[string]*vm.Program, len(p.States))
-	for _, s := range p.States {
-		for i, t := range s.Transitions {
-			key := fmt.Sprintf("%s:%d", s.ID, i)
+	transitionPrograms := make(map[string][]*vm.Program, len(p.States))
+	overPrograms := make(map[string]*vm.Program)
+
+	for i := range p.States {
+		s := &p.States[i]
+		stateIndex[s.ID] = s
+
+		progs := make([]*vm.Program, 0, len(s.Transitions))
+		for j, t := range s.Transitions {
+			key := fmt.Sprintf("%s:%d", s.ID, j)
 			prog, err := expr.Compile(t.When)
 			if err != nil {
-				return nil, fmt.Errorf("compile state %q transition %d: %w", s.ID, i, err)
+				return nil, fmt.Errorf("compile state %q transition %d: %w", s.ID, j, err)
 			}
 			programs[key] = prog
+			progs = append(progs, prog)
+		}
+		transitionPrograms[s.ID] = progs
+
+		// Pre-compile parallel "over" expressions so execution never calls expr.Compile.
+		if s.Kind == policy.KindParallel && s.Over != "" {
+			prog, err := expr.Compile(s.Over)
+			if err != nil {
+				return nil, fmt.Errorf("compile state %q over expression: %w", s.ID, err)
+			}
+			overPrograms[s.ID] = prog
 		}
 	}
 
-	return &Artifact{Policy: p, programs: programs}, nil
+	return &Artifact{
+		Policy:             p,
+		stateIndex:         stateIndex,
+		transitionPrograms: transitionPrograms,
+		overPrograms:       overPrograms,
+		programs:           programs,
+	}, nil
 }
 
 func validate(p *policy.Policy) error {

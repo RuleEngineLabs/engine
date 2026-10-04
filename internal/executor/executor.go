@@ -86,20 +86,17 @@ func Execute(ctx context.Context, art *compiler.Artifact, input any) (Result, er
 }
 
 // Execute runs the policy state machine for the given artifact and input.
+// Uses pre-built stateIndex and transitionPrograms from the Artifact to eliminate
+// per-call allocations and fmt.Sprintf in the hot loop.
 func (e *Executor) Execute(ctx context.Context, art *compiler.Artifact, input any) (Result, error) {
-	stateIndex := make(map[string]*policy.State, len(art.Policy.States))
-	for i := range art.Policy.States {
-		stateIndex[art.Policy.States[i].ID] = &art.Policy.States[i]
-	}
-
 	env := map[string]any{
-		"input":      input,
+		"input":      coerceISODates(input),
 		"contextKey": map[string]any{},
 	}
 
 	currentID := art.Policy.Entry
 	for step := 0; step < maxSteps; step++ {
-		s, ok := stateIndex[currentID]
+		s, ok := art.State(currentID)
 		if !ok {
 			return Result{}, fmt.Errorf("state %q not found during execution", currentID)
 		}
@@ -118,7 +115,7 @@ func (e *Executor) Execute(ctx context.Context, art *compiler.Artifact, input an
 			}
 
 		case policy.KindParallel:
-			if err := e.runParallel(ctx, s, env); err != nil {
+			if err := e.runParallel(ctx, art, s, env); err != nil {
 				if s.Fallback != "" {
 					currentID = s.Fallback
 					continue
@@ -153,20 +150,15 @@ func Preview(ctx context.Context, art *compiler.Artifact, input any) (Result, er
 
 // Preview is the Executor-level entry point for preview mode.
 func (e *Executor) Preview(ctx context.Context, art *compiler.Artifact, input any) (Result, error) {
-	stateIndex := make(map[string]*policy.State, len(art.Policy.States))
-	for i := range art.Policy.States {
-		stateIndex[art.Policy.States[i].ID] = &art.Policy.States[i]
-	}
-
 	env := map[string]any{
-		"input":      input,
+		"input":      coerceISODates(input),
 		"contextKey": map[string]any{},
 	}
 
 	var trace []TraceEntry
 	currentID := art.Policy.Entry
 	for step := 0; step < maxSteps; step++ {
-		s, ok := stateIndex[currentID]
+		s, ok := art.State(currentID)
 		if !ok {
 			return Result{}, fmt.Errorf("state %q not found during execution", currentID)
 		}
@@ -214,7 +206,7 @@ func (e *Executor) Preview(ctx context.Context, art *compiler.Artifact, input an
 			}
 
 		case policy.KindParallel:
-			if err := e.runParallel(ctx, s, env); err != nil {
+			if err := e.runParallel(ctx, art, s, env); err != nil {
 				if s.Fallback != "" {
 					trace = append(trace, TraceEntry{StateID: s.ID, DurationMs: time.Since(start).Milliseconds()})
 					currentID = s.Fallback
@@ -245,10 +237,7 @@ func (e *Executor) Preview(ctx context.Context, art *compiler.Artifact, input an
 }
 
 // resolveSandbox calls the sandbox Loader for a write state in preview mode.
-// It returns the response body as a parsed any (for contextKey injection), or an error
-// carrying the sandbox sentinel values (ErrMappingNotFound / ErrSandboxUnavailable).
 func (e *Executor) resolveSandbox(ctx context.Context, s *policy.State, method string, env map[string]any) (any, error) {
-	// Extract body from env so matchers can match on it.
 	var body map[string]any
 	if input, ok := env["input"]; ok {
 		if m, ok := input.(map[string]any); ok {
@@ -338,16 +327,16 @@ func (e *Executor) runAPICall(ctx context.Context, s *policy.State, env map[stri
 }
 
 // runParallel evaluates s.Over to get an item array, then processes each item
-// with up to s.MaxConcurrency concurrent goroutines. Results are collected in
-// env["contextKey"][s.ContextKey] as a slice (preserving insertion order).
-func (e *Executor) runParallel(ctx context.Context, s *policy.State, env map[string]any) error {
+// with up to s.MaxConcurrency concurrent goroutines. Uses pre-compiled over
+// expression from the Artifact instead of calling expr.Compile at runtime.
+func (e *Executor) runParallel(ctx context.Context, art *compiler.Artifact, s *policy.State, env map[string]any) error {
 	if s.Over == "" {
 		return nil
 	}
 
-	overProg, err := expr.Compile(s.Over)
-	if err != nil {
-		return fmt.Errorf("state %q: compile over expression: %w", s.ID, err)
+	overProg, ok := art.OverProgram(s.ID)
+	if !ok {
+		return fmt.Errorf("state %q: over program not found in artifact", s.ID)
 	}
 	raw, err := expr.Run(overProg, env)
 	if err != nil {
@@ -405,7 +394,7 @@ func storeResult(s *policy.State, body []byte, env map[string]any) error {
 	}
 	var parsed any
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return fmt.Errorf("state %q: decode response body: %w", s.ID, err)
+		return fmt.Errorf("state %q: decode response body: %w", s.ContextKey, err)
 	}
 	env["contextKey"].(map[string]any)[s.ContextKey] = parsed
 	return nil
@@ -432,22 +421,90 @@ func resolveTemplate(tmpl string, env map[string]any) string {
 	})
 }
 
+// evalTransitions uses pre-compiled programs from the Artifact, eliminating
+// fmt.Sprintf key construction in the hot loop.
 func evalTransitions(art *compiler.Artifact, s *policy.State, env map[string]any) (string, error) {
-	for i, t := range s.Transitions {
-		key := fmt.Sprintf("%s:%d", s.ID, i)
-		prog, ok := art.Program(key)
-		if !ok {
-			return "", fmt.Errorf("state %q: compiled program for transition %d not found", s.ID, i)
-		}
+	progs, _ := art.TransitionPrograms(s.ID)
+	for i, prog := range progs {
 		out, err := expr.Run(prog, env)
 		if err != nil {
 			return "", fmt.Errorf("state %q transition %d: %w", s.ID, i, err)
 		}
 		if matched, ok := out.(bool); ok && matched {
-			return t.To, nil
+			return s.Transitions[i].To, nil
 		}
 	}
 	return "", nil
+}
+
+// isoDateFormats are the ISO 8601 variants tried in order when coercing strings to time.Time.
+var isoDateFormats = []string{time.RFC3339, time.DateOnly}
+
+// containsDates reports whether v (or any value nested within it) is an ISO date
+// string. It scans without allocating — used as a fast gate before coerceISODates
+// commits to building a new map/slice copy.
+func containsDates(v any) bool {
+	switch val := v.(type) {
+	case string:
+		for _, layout := range isoDateFormats {
+			if _, err := time.Parse(layout, val); err == nil {
+				return true
+			}
+		}
+		return false
+	case map[string]any:
+		for _, child := range val {
+			if containsDates(child) {
+				return true
+			}
+		}
+		return false
+	case []any:
+		for _, child := range val {
+			if containsDates(child) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// coerceISODates recursively walks v and converts ISO 8601 strings to time.Time.
+// Fast path: if the subtree contains no ISO date strings, the original value is
+// returned with zero allocations. A map or slice is only copied when at least one
+// date string is found (two-pass: containsDates scan + coerce pass).
+func coerceISODates(v any) any {
+	switch val := v.(type) {
+	case string:
+		for _, layout := range isoDateFormats {
+			if t, err := time.Parse(layout, val); err == nil {
+				return t
+			}
+		}
+		return val
+	case map[string]any:
+		if !containsDates(val) {
+			return val // fast path: no dates in subtree, zero allocations
+		}
+		out := make(map[string]any, len(val))
+		for k, child := range val {
+			out[k] = coerceISODates(child)
+		}
+		return out
+	case []any:
+		if !containsDates(val) {
+			return val // fast path: no dates in subtree, zero allocations
+		}
+		out := make([]any, len(val))
+		for i, child := range val {
+			out[i] = coerceISODates(child)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // MemCache is a simple in-memory ResultCache with TTL eviction.
