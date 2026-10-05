@@ -174,6 +174,25 @@ func TestStore_GetVersion_IntegerNotFound(t *testing.T) {
 	}
 }
 
+// TestStore_UpsertDraft_UnmarshalableData covers history.go:129 — the `return ""`
+// inside hashPolicy when json.Marshal fails. State.Data is `any`, so passing a chan
+// value triggers json.UnsupportedTypeError; UpsertDraft still stores the draft with
+// an empty ContentHash (no panic or error is surfaced to callers).
+func TestStore_UpsertDraft_UnmarshalableData(t *testing.T) {
+	ps := store.New()
+	p := &policy.Policy{
+		Name:  "chpol",
+		Entry: "s",
+		States: []policy.State{
+			{ID: "s", Kind: policy.KindResponse, Status: 200, Data: make(chan int)},
+		},
+	}
+	ps.UpsertDraft("chpol", "", p, nil)
+	if _, ok := ps.GetDraft("chpol"); !ok {
+		t.Fatal("expected draft to be stored despite unmarshalable Data field")
+	}
+}
+
 func TestStore_SetMeta_NotFound(t *testing.T) {
 	ps := store.New()
 	err := ps.SetMeta("nonexistent", &store.PolicyMeta{})

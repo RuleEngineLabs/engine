@@ -369,3 +369,51 @@ func TestHandleSetMeta_SetsApprovers(t *testing.T) {
 		t.Errorf("expected approvers=[team-reviewers], got %v", approvers)
 	}
 }
+
+// ---- canary: missing error paths for 98% threshold ----
+
+func TestHandleStartCanary_InvalidPercent(t *testing.T) {
+	ps := makeApproveStore(t, "mypol", "team-a")
+	v := &auth.HMACVerifier{Secret: covAuthSecret}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/policies/mypol/canary",
+		bytes.NewBufferString(`{"candidateVersion":"1.0.0","percent":150,"ttl":3600}`))
+	r.Header.Set("Authorization", covBearerHeader([]string{"team-a"}))
+	newCanaryCovMux(ps, v).ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for invalid percent, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleExtendCanary_ReducePercent(t *testing.T) {
+	ps := makeApproveStore(t, "mypol", "team-a")
+	ps.StartCanary("mypol", "1.0.0", 50, 3600) // start at 50%
+	v := &auth.HMACVerifier{Secret: covAuthSecret}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPatch, "/policies/mypol/canary",
+		bytes.NewBufferString(`{"percent":20}`)) // reducing is not allowed
+	r.Header.Set("Authorization", covBearerHeader([]string{"team-a"}))
+	newCanaryCovMux(ps, v).ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for reduce attempt, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleCancelCanary_NoActiveCanary(t *testing.T) {
+	ps := makeApproveStore(t, "mypol", "team-a") // policy exists, no canary
+	v := &auth.HMACVerifier{Secret: covAuthSecret}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/policies/mypol/canary",
+		bytes.NewBufferString(`{"reason":"test"}`))
+	r.Header.Set("Authorization", covBearerHeader([]string{"team-a"}))
+	newCanaryCovMux(ps, v).ServeHTTP(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when no active canary, got %d: %s", w.Code, w.Body.String())
+	}
+}
