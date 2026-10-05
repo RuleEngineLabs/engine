@@ -45,9 +45,6 @@ jobs:
         run: |
           go test -short -count=1 -coverpkg=./internal/store/,./cmd/admin/ -coverprofile=coverage.out ./cmd/admin/ ./internal/store/
           go tool cover -func=coverage.out | tee coverage.txt
-          echo "--- uncovered ranges ---"
-          grep -E " 0$" coverage.out || true
-          echo "--- end uncovered ---"
           TOTAL=$(grep 'total:' coverage.txt | awk '{print $3}' | tr -d '%')
           echo "Coverage: ${TOTAL}%"
           awk -v t="$TOTAL" 'BEGIN { if (t+0 < 98.0) { print "Coverage " t "% is below the 98.0% gate"; exit 1 } }'

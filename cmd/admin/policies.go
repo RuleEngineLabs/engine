@@ -51,14 +51,9 @@ func handleCreate(ps *store.PolicyStore) http.HandlerFunc {
 			var errReserved store.ErrNameReserved
 			if errors.As(err, &errReserved) {
 				writeError(w, http.StatusUnprocessableEntity, errReserved.Error())
-				return
+			} else {
+				writeError(w, http.StatusConflict, err.Error())
 			}
-			var errExists store.ErrNameExists
-			if errors.As(err, &errExists) {
-				writeError(w, http.StatusConflict, errExists.Error())
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "failed to store policy")
 			return
 		}
 
