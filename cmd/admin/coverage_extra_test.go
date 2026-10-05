@@ -226,13 +226,21 @@ func TestStore_Promote_NonNumericSemVer(t *testing.T) {
 
 // ---- isStaging: original function body ----
 
-// TestIsStaging_OriginalReturnsFalse calls the original isStaging implementation
-// directly (no override) to cover execute.go:34-36 — the two statements inside the
-// anonymous function that are never reached when every benchmark test overrides the var.
-func TestIsStaging_OriginalReturnsFalse(t *testing.T) {
-	t.Setenv("ENVIRONMENT", "") // ensure ENVIRONMENT is neither "staging" nor "homologacao"
-	if isStaging() {
-		t.Error("original isStaging: expected false when ENVIRONMENT is empty")
+// originalIsStaging captures the default isStaging implementation at package-init time,
+// before any test can replace the var — guarantees execute.go:34-36 is covered
+// regardless of test execution order or -race flag behavior.
+var originalIsStaging = isStaging
+
+// TestIsStaging_OriginalBody exercises execute.go:34-36 via the captured original
+// implementation, independent of whether benchmark helpers have overridden isStaging.
+func TestIsStaging_OriginalBody(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "staging")
+	if !originalIsStaging() {
+		t.Error("expected true for ENVIRONMENT=staging")
+	}
+	t.Setenv("ENVIRONMENT", "")
+	if originalIsStaging() {
+		t.Error("expected false for empty ENVIRONMENT")
 	}
 }
 
