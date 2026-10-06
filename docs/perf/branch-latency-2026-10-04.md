@@ -4,8 +4,8 @@
 
 | Branch | Conditions | RPS | p50 | p99 | p99.9 | max |
 |:-------|----------:|----:|----:|----:|------:|----:|
-| approved (depth=1) | 1 | 183/s | 52.2082ms | 99.1951ms | 140.6521ms | 145.2602ms |
-| manual   (depth=2) | 2 | 185/s | 51.8962ms | 97.9951ms | 116.6946ms | 127.1026ms |
-| rejected (depth=3) | 3 | 197/s | 48.5545ms | 86.3795ms | 102.719ms | 106.0441ms |
+| approved (depth=1) | 1 | 140/s | 65.3831ms | 142.5155ms | 888.4347ms | 888.4347ms |
+| manual   (depth=2) | 2 | 133/s | 67.1081ms | 156.3831ms | 211.6595ms | 211.6595ms |
+| rejected (depth=3) | 3 | 145/s | 63.4116ms | 130.0261ms | 369.7096ms | 369.7096ms |
 
-> Δp99 (rejected − approved) = **-12.8156ms**
+> Δp99 (rejected − approved) = **-12.4894ms**

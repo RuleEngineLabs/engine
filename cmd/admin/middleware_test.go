@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -176,6 +177,11 @@ func TestWithCorrelationID_GeneratesIDWhenAbsent(t *testing.T) {
 	id := rr.Header().Get("X-Request-ID")
 	if id == "" {
 		t.Fatal("expected generated X-Request-ID, got empty")
+	}
+	// CA-4.2: must be a valid UUID v4 (version bits = 4, variant bits = 8/9/a/b).
+	uuidV4Re := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	if !uuidV4Re.MatchString(id) {
+		t.Errorf("generated X-Request-ID %q is not a valid UUID v4", id)
 	}
 }
 

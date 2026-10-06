@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/RuleEngineLabs/engine/internal/auth"
@@ -15,6 +17,15 @@ import (
 	"github.com/RuleEngineLabs/engine/internal/store"
 )
 
+
+// executeResponse is the envelope returned on successful policy execution.
+// It mirrors executor.Result fields and adds duration_ms without modifying the executor type.
+type executeResponse struct {
+	State      string               `json:"state"`
+	Data       any                  `json:"data"`
+	Trace      []executor.TraceEntry `json:"trace,omitempty"`
+	DurationMs int64                `json:"duration_ms"`
+}
 
 // isStaging reports whether the current environment is staging.
 // Reads ENVIRONMENT env var; accepts "staging" (case-insensitive) or "homologacao".
@@ -52,6 +63,7 @@ func handleExecute(ps *store.PolicyStore, rl *ratelimit.Limiter) http.HandlerFun
 			if rl != nil {
 				key := noCacheCallerKey(r, claims)
 				if !rl.Allow(key) {
+					w.Header().Set("Retry-After", "1")
 					writeError(w, http.StatusTooManyRequests, "rate limit exceeded for noCache")
 					return
 				}
@@ -60,11 +72,11 @@ func handleExecute(ps *store.PolicyStore, rl *ratelimit.Limiter) http.HandlerFun
 
 		rec, err := ps.Current(id)
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{"error": "policy_not_found"})
+			writeError(w, http.StatusNotFound, "policy_not_found")
 			return
 		}
+
+		meta := ps.GetMeta(rec.Name)
 
 		var input any
 		if r.ContentLength > 0 {
@@ -74,13 +86,21 @@ func handleExecute(ps *store.PolicyStore, rl *ratelimit.Limiter) http.HandlerFun
 			}
 		}
 
+		// Apply per-policy execution timeout.
+		execCtx := r.Context()
+		if meta != nil && meta.HTTP.TimeoutMs > 0 {
+			var cancel context.CancelFunc
+			execCtx, cancel = context.WithTimeout(execCtx, time.Duration(meta.HTTP.TimeoutMs)*time.Millisecond)
+			defer cancel()
+		}
+
 		log := loggerFromContext(r.Context())
 		start := time.Now()
-		result, err := executor.Execute(r.Context(), rec.Artifact, input)
+		result, err := executor.Execute(execCtx, rec.Artifact, input)
 		durationMs := time.Since(start).Milliseconds()
 		if err != nil {
 			log.Error("execute failed", "policy", rec.Name, "err", err)
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeError(w, http.StatusInternalServerError, "internal execution error")
 			return
 		}
 		log.Info("execute ok", "policy", rec.Name, "state", result.State, "duration_ms", durationMs)
@@ -90,8 +110,37 @@ func handleExecute(ps *store.PolicyStore, rl *ratelimit.Limiter) http.HandlerFun
 			go runShadow(ps, rec.Name, rec.StableVersion, shadow, input, result, log)
 		}
 
+		// Resolve HTTP status: policy state wins; fall back to 200.
+		// Clamp to valid range to avoid malformed responses from misconfigured policies.
+		httpStatus := http.StatusOK
+		if result.Status >= 100 && result.Status <= 599 {
+			httpStatus = result.Status
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(result)
+
+		// Cache-Control: only on GET requests (semantically cacheable).
+		if meta != nil && meta.HTTP.CacheMaxAgeSeconds > 0 && r.Method == http.MethodGet {
+			w.Header().Set("Cache-Control", fmt.Sprintf("max-age=%d", meta.HTTP.CacheMaxAgeSeconds))
+		}
+
+		// Retry-After: when the resolved status is in the configured retry list.
+		if meta != nil && meta.HTTP.RetryAfterSeconds > 0 {
+			for _, code := range meta.HTTP.RetryOn {
+				if code == httpStatus {
+					w.Header().Set("Retry-After", strconv.Itoa(meta.HTTP.RetryAfterSeconds))
+					break
+				}
+			}
+		}
+
+		w.WriteHeader(httpStatus)
+		json.NewEncoder(w).Encode(executeResponse{
+			State:      result.State,
+			Data:       result.Data,
+			Trace:      result.Trace,
+			DurationMs: durationMs,
+		})
 	}
 }
 
@@ -146,6 +195,9 @@ func runShadow(ps *store.PolicyStore, policyName, stableVersion string, shadow *
 	// Identical outputs: no divergence record.
 }
 
+// noCacheCallerKey returns a rate-limit bucket key for noCache requests.
+// Granularity is per Cognito group (first group claim), not per individual user.
+// Unauthenticated callers fall back to RemoteAddr.
 func noCacheCallerKey(r *http.Request, claims *auth.Claims) string {
 	if claims != nil && len(claims.Groups) > 0 {
 		return claims.Groups[0]

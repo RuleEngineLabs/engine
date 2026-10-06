@@ -53,6 +53,9 @@ type httpStepResult struct {
 }
 
 func TestHTTPStepStress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping HTTP stress test in -short mode; run with -timeout=300s without -short")
+	}
 	// ── Build in-process server ───────────────────────────────────────────
 	ps := store.New()
 
@@ -393,6 +396,9 @@ func writeStressReport(t *testing.T, results []httpStepResult, broken bool, ceil
 //
 //	go test -v -run TestHTTPBranchLatency -count=1 -timeout=120s ./cmd/admin/
 func TestHTTPBranchLatency(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping HTTP branch latency test in -short mode; run with -timeout=120s without -short")
+	}
 	ps := store.New()
 
 	creditPol := &policy.Policy{

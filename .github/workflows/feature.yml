@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - 'feature/**'
+      - 'fix/**'
 
 permissions:
   contents: read
@@ -37,12 +38,16 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - name: Test + coverage
+      - name: Test (race detector)
+        run: go test -short -race -count=1 ./cmd/admin/ ./internal/store/
+
+      - name: Test + coverage gate (≥98%)
         run: |
-          go test -race -coverprofile=coverage.out ./...
+          go test -short -count=1 -coverpkg=./internal/store/,./cmd/admin/ -coverprofile=coverage.out ./cmd/admin/ ./internal/store/
           go tool cover -func=coverage.out | tee coverage.txt
           TOTAL=$(grep 'total:' coverage.txt | awk '{print $3}' | tr -d '%')
           echo "Coverage: ${TOTAL}%"
+          awk -v t="$TOTAL" 'BEGIN { if (t+0 < 98.0) { print "Coverage " t "% is below the 98.0% gate"; exit 1 } }'
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4

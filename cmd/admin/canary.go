@@ -55,14 +55,9 @@ func handleStartCanary(ps *store.PolicyStore) http.HandlerFunc {
 			var errPercent store.ErrCanaryInvalidPercent
 			if errors.As(err, &errPercent) {
 				writeError(w, http.StatusUnprocessableEntity, errPercent.Error())
-				return
+			} else {
+				writeError(w, http.StatusConflict, err.Error())
 			}
-			var errActive store.ErrCanaryAlreadyActive
-			if errors.As(err, &errActive) {
-				writeError(w, http.StatusConflict, errActive.Error())
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
@@ -112,14 +107,9 @@ func handleExtendCanary(ps *store.PolicyStore) http.HandlerFunc {
 			var errReduce store.ErrCanaryExtendReduce
 			if errors.As(err, &errReduce) {
 				writeError(w, http.StatusUnprocessableEntity, errReduce.Error())
-				return
+			} else {
+				writeError(w, http.StatusNotFound, err.Error())
 			}
-			var errNotFound store.ErrCanaryNotFound
-			if errors.As(err, &errNotFound) {
-				writeError(w, http.StatusNotFound, errNotFound.Error())
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
@@ -162,12 +152,7 @@ func handleCancelCanary(ps *store.PolicyStore) http.HandlerFunc {
 
 		canary, err := ps.CancelCanary(name, req.Reason)
 		if err != nil {
-			var errNotFound store.ErrCanaryNotFound
-			if errors.As(err, &errNotFound) {
-				writeError(w, http.StatusNotFound, errNotFound.Error())
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
 

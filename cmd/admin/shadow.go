@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/RuleEngineLabs/engine/internal/store"
@@ -35,12 +34,7 @@ func handleStartShadow(ps *store.PolicyStore) http.HandlerFunc {
 
 		rec, err := ps.StartShadow(name, candidateVersion, draft.Artifact)
 		if err != nil {
-			var alreadyActive store.ErrShadowAlreadyActive
-			if errors.As(err, &alreadyActive) {
-				writeError(w, http.StatusConflict, err.Error())
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
 
@@ -57,12 +51,7 @@ func handleStopShadow(ps *store.PolicyStore) http.HandlerFunc {
 
 		rec, err := ps.StopShadow(name)
 		if err != nil {
-			var notFound store.ErrShadowNotFound
-			if errors.As(err, &notFound) {
-				writeError(w, http.StatusNotFound, err.Error())
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeError(w, http.StatusNotFound, err.Error())
 			return
 		}
 

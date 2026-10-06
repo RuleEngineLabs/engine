@@ -187,6 +187,42 @@ func TestPromoteShadow_StopShadowPreservesDraft(t *testing.T) {
 	}
 }
 
+// TestPromoteShadow_NoDraftApproveFails covers shadow.go:115-117: ApproveDraft returns
+// an error when there is an active shadow but no draft has been staged.
+// StartShadow does not require a draft, so this state is reachable.
+func TestPromoteShadow_NoDraftApproveFails(t *testing.T) {
+	ps := store.New()
+	art := buildArt(map[string]any{"v": "stable"})
+	// Start shadow directly — no UpsertDraft, so ApproveDraft will fail.
+	ps.StartShadow("orphanPolicy", "1.0.0", art)
+	mux := newAdminMux(ps, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/policies/orphanPolicy/shadow/promote", strings.NewReader("{}"))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("want 409 when ApproveDraft fails (no draft), got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestPromoteShadow_MajorBumpNoCoexistenceWindow covers shadow.go:121-123: Promote
+// returns an error when bump=major but no coexistence window has been configured.
+func TestPromoteShadow_MajorBumpNoCoexistenceWindow(t *testing.T) {
+	ps, _, _ := buildPromoteStore(t) // active shadow + draft, no meta coexistence window
+	mux := newAdminMux(ps, nil)
+
+	body := `{"bump":"major"}`
+	req := httptest.NewRequest(http.MethodPost, "/policies/ordersPolicy/shadow/promote", strings.NewReader(body))
+	req.ContentLength = int64(len(body))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("want 409 when major Promote fails (no coexistence window), got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 // TestPromoteShadow_EmptyBody promotes with no body (Content-Length == 0).
 func TestPromoteShadow_EmptyBody(t *testing.T) {
 	ps, _, _ := buildPromoteStore(t)

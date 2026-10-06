@@ -31,16 +31,18 @@ func buildExecuteStore(t *testing.T) (*store.PolicyStore, string) {
 // withStagingEnv sets ENVIRONMENT=staging for the duration of the test.
 func withStagingEnv(t *testing.T) {
 	t.Helper()
+	orig := isStaging
 	t.Setenv("ENVIRONMENT", "staging")
 	isStaging = func() bool { return true }
-	t.Cleanup(func() { isStaging = func() bool { return false } })
+	t.Cleanup(func() { isStaging = orig })
 }
 
 // withProductionEnv ensures ENVIRONMENT is not staging for the duration of the test.
 func withProductionEnv(t *testing.T) {
 	t.Helper()
+	orig := isStaging
 	isStaging = func() bool { return false }
-	t.Cleanup(func() { isStaging = func() bool { return false } })
+	t.Cleanup(func() { isStaging = orig })
 }
 
 // approverRequest wraps a request with approver claims.
